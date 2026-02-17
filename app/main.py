@@ -385,4 +385,4 @@ async def list_notebooks():
     return sorted(nb_list, key=lambda x: x['timestamp'], reverse=True)
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8090)

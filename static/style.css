@@ -1888,7 +1888,8 @@ button[id$="-btn"] {
     position: relative;
     padding: 0 !important;
     margin: 0 2px !important;
-    color: #5f6368; /* neutral */
+    color: #5f6368;
+    /* neutral */
     transition: background-color 0.2s ease, color 0.15s ease;
 }
 

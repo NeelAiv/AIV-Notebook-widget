@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  ai-notebook:
+    build: .
+    container_name: insightedge-ai-notebook
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./notebooks:/app/notebooks
+      - ./connections.json:/app/connections.json
+      - ./history.json:/app/history.json
+      - ./.env:/app/.env
+    restart: always
