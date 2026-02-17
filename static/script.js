@@ -8,6 +8,141 @@ let lastDataForChart = null;
 let pyodide = null; // Global Pyodide instance
 let showCode = true; // Global toggle: set to false to hide code blocks in AI responses
 
+// =======================
+// LOADING SCREEN MANAGEMENT
+// =======================
+function hideLoadingScreen() {
+    const loadingScreen = document.getElementById('loading-screen');
+    if (loadingScreen) {
+        loadingScreen.classList.add('hidden');
+    }
+}
+
+// =======================
+// CUSTOM DIALOG SYSTEM
+// =======================
+let dialogConfig = {
+    resolve: null,
+    type: 'confirm' // 'alert', 'confirm', 'prompt'
+};
+
+function showCustomDialog(title, message, options = {}) {
+    const overlay = document.getElementById('custom-dialog-overlay');
+    const titleEl = document.getElementById('custom-dialog-title');
+    const messageEl = document.getElementById('custom-dialog-message');
+    const inputEl = document.getElementById('custom-dialog-input');
+    const cancelBtn = document.getElementById('custom-dialog-cancel');
+    const confirmBtn = document.getElementById('custom-dialog-confirm');
+
+    titleEl.textContent = title;
+    messageEl.textContent = message;
+
+    // Reset dialog state
+    inputEl.style.display = 'none';
+    inputEl.value = '';
+    cancelBtn.style.display = 'inline-block';
+    confirmBtn.classList.remove('danger');
+    confirmBtn.textContent = 'Confirm';
+
+    // Configure based on type
+    const type = options.type || 'alert';
+    dialogConfig.type = type;
+
+    if (type === 'alert') {
+        cancelBtn.style.display = 'none';
+        confirmBtn.textContent = 'OK';
+        setTimeout(() => confirmBtn.focus(), 60);
+    } else if (type === 'confirm') {
+        cancelBtn.style.display = 'inline-block';
+        // If this is a destructive confirm, use "Delete" as the default action label
+        confirmBtn.textContent = options.confirmText || (options.isDangerous ? 'Delete' : 'Confirm');
+        if (options.isDangerous) {
+            confirmBtn.classList.add('danger');
+        } else {
+            confirmBtn.classList.remove('danger');
+        }
+        setTimeout(() => confirmBtn.focus(), 60);
+    } else if (type === 'prompt') {
+        cancelBtn.style.display = 'inline-block';
+        inputEl.style.display = 'block';
+        inputEl.placeholder = options.placeholder || '';
+        inputEl.value = options.defaultValue || '';
+        confirmBtn.textContent = 'OK';
+        
+        // Add keyboard support for prompt input
+        inputEl.onkeydown = (e) => {
+            if (e.key === 'Enter') {
+                confirmCustomDialog();
+            } else if (e.key === 'Escape') {
+                cancelCustomDialog();
+            }
+        };
+        
+        setTimeout(() => inputEl.focus(), 100);
+    }
+
+    overlay.style.display = 'flex';
+
+    return new Promise((resolve) => {
+        dialogConfig.resolve = resolve;
+    });
+}
+
+function closeCustomDialog() {
+    const overlay = document.getElementById('custom-dialog-overlay');
+    overlay.style.display = 'none';
+    if (dialogConfig.resolve) {
+        dialogConfig.resolve(null);
+        dialogConfig.resolve = null;
+    }
+}
+
+function confirmCustomDialog() {
+    const overlay = document.getElementById('custom-dialog-overlay');
+    const inputEl = document.getElementById('custom-dialog-input');
+    
+    let result = true;
+    if (dialogConfig.type === 'prompt') {
+        result = inputEl.value;
+    }
+
+    overlay.style.display = 'none';
+    if (dialogConfig.resolve) {
+        dialogConfig.resolve(result);
+        dialogConfig.resolve = null;
+    }
+}
+
+function cancelCustomDialog() {
+    const overlay = document.getElementById('custom-dialog-overlay');
+    overlay.style.display = 'none';
+    if (dialogConfig.resolve) {
+        dialogConfig.resolve(false);
+        dialogConfig.resolve = null;
+    }
+}
+
+// Convenience functions matching browser dialog API
+async function customAlert(message) {
+    await showCustomDialog('Alert', message, { type: 'alert' });
+}
+
+async function customConfirm(message, isDangerous = false) {
+    return await showCustomDialog('Confirm', message, { type: 'confirm', isDangerous });
+}
+
+async function customPrompt(message, defaultValue = '') {
+    return await showCustomDialog('Input Required', message, { type: 'prompt', defaultValue });
+}
+
+// Generate a default notebook name with timestamp
+function generateNotebookName() {
+    const now = new Date();
+    const date = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const time = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+    return `Notebook ${date} ${time}`;
+}
+
 // Multi-Chat System
 let currentChatId = null;
 let chats = [];
@@ -19,7 +154,7 @@ let currentNotebookId = 'default_notebook';
 
 const ICON_MAXIMIZE = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="m21 3-7 7"/><path d="m3 21 7-7"/><path d="M9 21H3v-6"/></svg>`;
 
-const ICON_MINIMIZE = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m14 10 7-7"/><path d="M20 10h-6V4"/><path d="m3 21 7-7"/><path d="M4 14h6v6"/></svg>`;
+const ICON_MINIMIZE = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-minimize-icon lucide-minimize"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg>`;
 
 const ICON_BOLD = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8"/></svg>`;
 
@@ -392,12 +527,14 @@ async function initPyodide() {
         dot.style.color = "#4ade80";
 
         console.log("Pyodide Ready");
+        hideLoadingScreen();
 
     } catch (e) {
 
         text.innerText = "Kernel Failed";
 
         dot.style.color = "red";
+        hideLoadingScreen();
 
         console.error(e);
 
@@ -527,7 +664,7 @@ function addCodeCell(button) {
             </div>
             
             <div class="cell-content-part">
-                <div class="code-placeholder">Start coding or <u onclick="event.stopPropagation(); focusAI()">generate</u></div>
+                <div class="code-placeholder">Start coding or <u onclick="event.stopPropagation(); focusAI()">generate</u> with AI.</div>
                 <textarea class="code-editor" oninput="autoResize(this)" rows="1"></textarea>
                 <div class="cell-output" id="out-${cellCount}"></div>
             </div>
@@ -1031,17 +1168,34 @@ function renderChatList() {
   sortedChats.forEach(chat => {
     const item = document.createElement('div');
     item.className = 'chat-list-item' + (chat.id === currentChatId ? ' active' : '');
+    item.dataset.chatId = chat.id;
     item.onclick = () => switchChat(chat.id);
-    
+
+    const titleContainer = document.createElement('div');
+    titleContainer.className = 'chat-title-container';
+
     const title = document.createElement('div');
     title.className = 'chat-title';
     title.textContent = chat.title || 'New Chat';
-    
+
+    const editBtn = document.createElement('button');
+    editBtn.className = 'chat-edit-btn';
+    editBtn.setAttribute('aria-label', 'Rename chat');
+    editBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-pen-line-icon lucide-pen-line"><path d="M13 21h8"/><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/></svg>`;
+    // Prevent parent click (switchChat) when clicking edit
+    editBtn.onclick = (e) => {
+      e.stopPropagation();
+      startChatRename(chat.id);
+    };
+
+    titleContainer.appendChild(title);
+    titleContainer.appendChild(editBtn);
+
     const date = document.createElement('div');
     date.className = 'chat-date';
     date.textContent = formatChatDate(chat.updatedAt);
-    
-    item.appendChild(title);
+
+    item.appendChild(titleContainer);
     item.appendChild(date);
     chatList.appendChild(item);
   });
@@ -1080,6 +1234,51 @@ function updateChatTitle(chatId, title) {
     renderChatList();
     saveChatsToLocalStorage();
   }
+}
+
+/**
+ * Start inline rename for a chat
+ */
+function startChatRename(chatId) {
+  const selector = `[data-chat-id="${chatId}"] .chat-title-container`;
+  const container = document.querySelector(selector);
+  if (!container) return;
+  // Avoid duplicate inputs
+  if (container.querySelector('input')) return;
+
+  const titleDiv = container.querySelector('.chat-title');
+  const current = titleDiv ? titleDiv.textContent : '';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = current;
+  input.className = 'chat-title-input';
+
+  // Replace the title div with input
+  container.replaceChild(input, titleDiv);
+  input.focus();
+  input.select();
+
+  function finish(newVal) {
+    const value = (newVal || input.value || '').trim() || 'New Chat';
+    const chat = chats.find(c => c.id === chatId);
+    if (chat) {
+      chat.title = value;
+      chat.updatedAt = Date.now();
+      saveChatsToLocalStorage();
+      renderChatList();
+    }
+  }
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      finish(input.value);
+    } else if (e.key === 'Escape') {
+      renderChatList();
+    }
+  });
+
+  input.addEventListener('blur', () => finish(input.value));
 }
 
 /**
@@ -1781,7 +1980,7 @@ async function loadConnections() {
 } async function deleteDB(event, name) {
     event.stopPropagation();
 
-    if (!confirm(`Are you sure you want to delete "${name}"?`)) {
+    if (!await customConfirm(`Are you sure you want to delete "${name}"?`, true)) {
         return;
     }
 
@@ -1813,7 +2012,7 @@ async function loadConnections() {
 
     } catch (error) {
         console.error('Delete error:', error);
-        alert('Failed to delete: ' + error.message);
+        await customAlert('Failed to delete: ' + error.message);
     }
 }
 
@@ -1866,7 +2065,7 @@ async function checkStatus() {
 
 
 async function saveNotebook() {
-    const name = prompt('Enter notebook name:');
+    const name = await customPrompt('Enter notebook name:', generateNotebookName());
     if (!name) return;
 
     const cells = [];
@@ -1903,14 +2102,14 @@ async function saveNotebook() {
     });
 
     const result = await resp.json();
-    if (result.error) alert(result.error);
-    else alert('Notebook saved!');
+    if (result.error) await customAlert(result.error);
+    else await customAlert('Notebook saved!');
 }
 
 
 
-function newNotebook() {
-    if (!confirm("Start a new notebook? Unsaved changes will be lost.")) return;
+async function newNotebook() {
+    if (!await customConfirm("Start a new notebook? Unsaved changes will be lost.")) return;
 
     const view = document.getElementById('workspace-view');
     view.innerHTML = '';
@@ -1953,7 +2152,7 @@ async function openNotebook(name) {
     const cells = await resp.json();
 
     if (cells.error) {
-        alert("Could not load notebook.");
+        await customAlert("Could not load notebook.");
         return;
     }
     
@@ -2071,13 +2270,13 @@ async function uploadNotebook() {
             const result = await resp.json();
 
             if (result.error) {
-                alert(result.error);
+                await customAlert(result.error);
             } else {
-                alert(`Successfully uploaded: ${result.name} with ${result.cells_count} cells`);
+                await customAlert(`Successfully uploaded: ${result.name} with ${result.cells_count} cells`);
                 loadSavedNotebooks();
             }
         } catch (error) {
-            alert('Upload failed: ' + error.message);
+            await customAlert('Upload failed: ' + error.message);
         }
     };
 
@@ -2223,8 +2422,8 @@ function formatBlockquote() {
     document.execCommand('formatBlock', false, 'blockquote');
 }
 
-function insertLinkNewTab() {
-    const url = prompt("Enter URL");
+async function insertLinkNewTab() {
+    const url = await customPrompt("Enter URL");
     if (!url) return;
     document.execCommand('insertHTML', false, `<a href="${url}" target="_blank">${url}</a>`);
 }
@@ -2254,15 +2453,15 @@ function formatText(command, value) {
     document.execCommand(command, false, value);
 }
 
-function insertLink() {
-    const url = prompt('Enter URL:');
+async function insertLink() {
+    const url = await customPrompt('Enter URL:');
     if (url) {
         document.execCommand('createLink', false, url);
     }
 }
 
-function insertImage() {
-    const url = prompt('Enter image URL:');
+async function insertImage() {
+    const url = await customPrompt('Enter image URL:');
     if (url) {
         document.execCommand('insertImage', false, url);
     }
@@ -2323,8 +2522,8 @@ function deleteCell(button) {
     }
 }
 
-function moreOptions(button) {
-    alert('More options: duplicate, etc. (not implemented)');
+async function moreOptions(button) {
+    await customAlert('More options: duplicate, etc. (not implemented)');
 }
 
 /* ===========================================
@@ -2367,11 +2566,9 @@ function moveCellDown(button) {
     // 1. To move down, we actually target the NEXT cell and move IT up.
     if (currentBar && currentBar.nextElementSibling) {
         const nextCell = currentBar.nextElementSibling;
+        const parent = currentCell.parentNode;
 
         if (nextCell && nextCell.classList.contains('code-cell')) {
-            const nextBar = nextCell.nextElementSibling;
-            const parent = currentCell.parentNode;
-
             // 2. Insert the NEXT cell before the CURRENT cell (effectively swapping)
             parent.insertBefore(nextCell, currentCell);
 
@@ -2539,7 +2736,7 @@ async function deleteHistoryItem(event, itemId) {
 
 async function deleteSavedNotebook(event, name) {
     event.stopPropagation();
-    if (!confirm(`Delete notebook "${name}"?`)) return;
+    if (!await customConfirm(`Delete notebook "${name}"?`, true)) return;
     try {
         const resp = await fetch(`/api/notebooks/${encodeURIComponent(name)}`, { method: 'DELETE' });
         if (resp.ok) {
@@ -2557,7 +2754,7 @@ async function openSavedNotebook(notebookName) {
         const cells = await resp.json();
 
         if (cells.error) {
-            alert('Error loading notebook: ' + cells.error);
+            await customAlert('Error loading notebook: ' + cells.error);
             return;
         }
 
@@ -2581,10 +2778,10 @@ async function openSavedNotebook(notebookName) {
 
         // Switch to notebook view
         switchTab('notebook');
-        alert(`Notebook "${notebookName}" loaded successfully!`);
+        await customAlert(`Notebook "${notebookName}" loaded successfully!`);
 
     } catch (e) {
-        alert('Failed to load notebook: ' + e.message);
+        await customAlert('Failed to load notebook: ' + e.message);
     }
 }
 

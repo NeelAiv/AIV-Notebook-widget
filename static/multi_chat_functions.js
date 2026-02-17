@@ -258,11 +258,15 @@ function renderChatList() {
   // Delete button SVG
   const trashIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`;
   
+  // Edit/Pencil SVG
+  const pencilIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-pen-line-icon lucide-pen-line"><path d="M13 21h8"/><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/></svg>`;
+  
   sortedChats.forEach(chat => {
     const item = document.createElement('div');
     item.className = 'chat-list-item' + (chat.id === currentChatId ? ' active' : '');
+    item.dataset.chatId = chat.id;
     
-    // Add a click handler to the item content (not the delete button)
+    // Add a wrapper for title and date
     const contentWrapper = document.createElement('div');
     contentWrapper.style.flex = '1';
     contentWrapper.style.minWidth = '0';
@@ -280,6 +284,16 @@ function renderChatList() {
     contentWrapper.appendChild(title);
     contentWrapper.appendChild(date);
     
+    // Add edit button
+    const editBtn = document.createElement('button');
+    editBtn.className = 'chat-edit-btn';
+    editBtn.setAttribute('aria-label', 'Rename chat');
+    editBtn.innerHTML = pencilIcon;
+    editBtn.onclick = (e) => {
+      e.stopPropagation();
+      startChatRename(chat.id);
+    };
+    
     // Add delete button
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'delete-db-btn';
@@ -287,6 +301,7 @@ function renderChatList() {
     deleteBtn.onclick = (e) => deleteChat(e, chat.id);
     
     item.appendChild(contentWrapper);
+    item.appendChild(editBtn);
     item.appendChild(deleteBtn);
     chatList.appendChild(item);
   });
@@ -325,6 +340,50 @@ function updateChatTitle(chatId, title) {
     renderChatList();
     saveChatsToLocalStorage();
   }
+}
+
+/**
+ * Start inline rename for a chat
+ */
+function startChatRename(chatId) {
+  const item = document.querySelector(`[data-chat-id="${chatId}"]`);
+  if (!item) return;
+
+  const titleDiv = item.querySelector('.chat-title');
+  if (!titleDiv || item.querySelector('input')) return; // Avoid duplicate inputs
+
+  const current = titleDiv.textContent;
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = current;
+  input.className = 'chat-title-input';
+
+  // Replace title with input
+  titleDiv.replaceWith(input);
+  input.focus();
+  input.select();
+
+  function finish(newVal) {
+    const value = (newVal || input.value || '').trim() || 'New Chat';
+    const chat = chats.find(c => c.id === chatId);
+    if (chat) {
+      chat.title = value;
+      chat.updatedAt = Date.now();
+      saveChatsToLocalStorage();
+      renderChatList();
+    }
+  }
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      finish(input.value);
+    } else if (e.key === 'Escape') {
+      renderChatList();
+    }
+  });
+
+  input.addEventListener('blur', () => finish(input.value));
 }
 
 /**
@@ -386,14 +445,14 @@ function loadChatsFromLocalStorage() {
 /**
  * Delete a chat by ID
  */
-function deleteChat(event, chatId) {
+async function deleteChat(event, chatId) {
   event.stopPropagation();
   
   const chat = chats.find(c => c.id === chatId);
   if (!chat) return;
   
   // Show confirmation dialog
-  if (!confirm(`Delete chat "${chat.title}"? This action cannot be undone.`)) {
+  if (!await customConfirm(`Delete chat "${chat.title}"? This action cannot be undone.`, true)) {
     return;
   }
   
@@ -429,6 +488,6 @@ function deleteChat(event, chatId) {
     }
   } catch (e) {
     console.error('Failed to delete chat:', e);
-    alert('Failed to delete chat. Please try again.');
+    await customAlert('Failed to delete chat. Please try again.');
   }
 }

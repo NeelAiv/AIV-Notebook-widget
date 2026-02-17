@@ -1,3 +1,84 @@
+/* Loading Screen */
+.loading-screen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: #ffffff;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+    opacity: 1;
+    transition: opacity 0.3s ease-out;
+    pointer-events: auto;
+}
+
+.loading-screen.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.loading-content {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.loading-gif {
+    max-width: 150px;
+    max-height: 150px;
+    width: auto;
+    height: auto;
+}
+
+/* Chat rename controls */
+.chat-title-container {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+}
+
+.chat-edit-btn {
+    background: transparent;
+    border: none;
+    padding: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--text-secondary);
+    opacity: 0;
+    transition: opacity 0.2s, color 0.2s;
+    flex-shrink: 0;
+}
+
+.chat-list-item:hover .chat-edit-btn {
+    opacity: 1;
+}
+
+.chat-edit-btn:hover {
+    color: var(--accent);
+}
+
+.chat-edit-btn svg {
+    width: 16px;
+    height: 16px;
+    stroke: currentColor;
+}
+
+.chat-title.editing input,
+.chat-title-input {
+    font-size: 0.95rem;
+    padding: 4px 6px;
+    border-radius: 6px;
+    border: 1px solid #d1d5db;
+    outline: none;
+    min-width: 120px;
+}
+
 /* Colab-like code cell input styling */
 .colab-style {
     border: 1.5px solid #c3c3c3;
@@ -2379,4 +2460,156 @@ button[id$="-btn"] {
     padding: 40px 20px;
     color: #94a3b8;
     font-size: 0.9rem;
+}
+
+/* ======================================================
+   CUSTOM DIALOG SYSTEM (updated to match requested visual)
+   - larger bold title
+   - pill buttons (outline cancel / red destructive)
+   - no info icon (keeps message text only)
+====================================================== */
+.custom-dialog-overlay {
+    position: fixed;
+    inset: 0;
+    background-color: rgba(2, 6, 23, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+    animation: fadeIn 0.18s ease-out;
+    -webkit-backdrop-filter: blur(4px);
+            backdrop-filter: blur(4px);
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.custom-dialog-modal {
+    background: #ffffff;
+    border-radius: 18px;
+    box-shadow: 0 30px 60px rgba(2, 6, 23, 0.35);
+    max-width: 640px;
+    width: min(640px, 92vw);
+    animation: slideUp 0.28s cubic-bezier(.2,.9,.2,1);
+    overflow: visible;
+}
+
+@keyframes slideUp {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.custom-dialog-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 22px 26px 18px 26px;
+    border-bottom: none; /* cleaner look like the reference */
+}
+
+.custom-dialog-title {
+    margin: 0;
+    font-size: 1.5rem; /* ~24px */
+    font-weight: 800;
+    color: var(--text-primary);
+}
+
+.custom-dialog-close {
+    background: rgba(15,23,42,0.03);
+    border: 1px solid rgba(15,23,42,0.06);
+    width: 40px;
+    height: 40px;
+    border-radius: 9999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: #9aa3b2;
+    transition: background-color 0.15s, transform 0.12s;
+}
+
+.custom-dialog-close:hover {
+    background: rgba(15,23,42,0.06);
+    transform: translateY(-1px);
+    color: var(--text-primary);
+}
+
+.custom-dialog-content {
+    padding: 18px 26px 22px 26px;
+}
+
+.custom-dialog-message {
+    margin: 0 0 8px 0;
+    color: #0f172a;
+    font-size: 1rem;
+    line-height: 1.6;
+}
+
+.custom-dialog-input {
+    width: 100%;
+    padding: 12px 14px;
+    border: 1px solid #e6e9ef;
+    border-radius: 10px;
+    font-size: 0.98rem;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.16s, box-shadow 0.16s;
+}
+
+.custom-dialog-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 6px 20px rgba(37,99,235,0.12);
+}
+
+.custom-dialog-actions {
+    display: flex;
+    gap: 18px;
+    padding: 18px 26px 26px 26px;
+    justify-content: center; /* center the two-pill buttons */
+}
+
+.custom-dialog-btn {
+    padding: 12px 36px;
+    border-radius: 9999px;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+    min-width: 140px;
+}
+
+.custom-dialog-btn-cancel {
+    background: #ffffff;
+    color: var(--accent);
+    border: 2px solid #e6e9ef;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.8);
+}
+
+.custom-dialog-btn-cancel:hover {
+    background: #fbfdff;
+    transform: translateY(-2px);
+}
+
+.custom-dialog-btn-confirm {
+    background: var(--accent);
+    color: #ffffff;
+    border: none;
+    box-shadow: 0 8px 30px rgba(37,99,235,0.18);
+}
+
+.custom-dialog-btn-confirm:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 14px 40px rgba(37,99,235,0.22);
+}
+
+.custom-dialog-btn-confirm.danger {
+    background: #ef4444; /* destructive red */
+    box-shadow: 0 14px 40px rgba(239,68,68,0.18);
+}
+
+.custom-dialog-btn-confirm.danger:hover {
+    background: #ff5757;
+    box-shadow: 0 20px 50px rgba(239,68,68,0.24);
 }
