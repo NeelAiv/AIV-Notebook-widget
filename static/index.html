@@ -27,6 +27,13 @@
 </head>
 
 <body>
+    <!-- LOADING SCREEN -->
+    <div id="loading-screen" class="loading-screen">
+        <div class="loading-content">
+            <img src="/static/loading.gif" alt="Loading..." class="loading-gif">
+        </div>
+    </div>
+
     <!-- FIXED TOP NAVBAR -->
     <nav class="navbar">
         <div class="navbar-content">
@@ -263,12 +270,7 @@
                         </svg>
                     </button>
                     <button id="ai-mini-max" class="ai-mini-icon" type="button" aria-label="Expand">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
-                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="m7 15 5 5 5-5" />
-                            <path d="m7 9 5-5 5 5" />
-                        </svg>
-                    </button>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-maximize-icon lucide-maximize"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>                    </button>
                     <button id="ai-mini-close" class="ai-mini-icon" type="button" aria-label="Close">
                         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
                             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -341,6 +343,30 @@
                         </div>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Custom Dialog Modal -->
+    <div id="custom-dialog-overlay" class="custom-dialog-overlay" style="display: none;">
+        <div class="custom-dialog-modal">
+            <div class="custom-dialog-header">
+                <h2 id="custom-dialog-title" class="custom-dialog-title"></h2>
+                <button class="custom-dialog-close" onclick="closeCustomDialog()" aria-label="Close dialog">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M18 6l-12 12" />
+                        <path d="M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+            <div class="custom-dialog-content">
+                <p id="custom-dialog-message" class="custom-dialog-message"></p>
+                <input id="custom-dialog-input" class="custom-dialog-input" type="text" style="display: none;" />
+            </div>
+            <div class="custom-dialog-actions">
+                <button id="custom-dialog-cancel" class="custom-dialog-btn custom-dialog-btn-cancel" onclick="cancelCustomDialog()">Cancel</button>
+                <button id="custom-dialog-confirm" class="custom-dialog-btn custom-dialog-btn-confirm" onclick="confirmCustomDialog()">Confirm</button>
             </div>
         </div>
     </div>
