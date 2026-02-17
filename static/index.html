@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>InsightEdge AI Notebook</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap%22
+        rel=" stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.8/purify.min.js"></script>
+    <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <link rel="icon" type="image/png" href="/static/favicon.png">
+
+</head>
+
+<body>
+    <!-- FIXED TOP NAVBAR -->
+    <nav class="navbar">
+        <div class="navbar-content">
+            <div class="navbar-logo">
+                <img src="/static/favicon.png" width="25" height="20">
+
+                <span class="navbar-title">AIV | InsightEdge</span>
+            </div>
+            <div class="navbar-buttons">
+                <button class="notebook-btn" onclick="saveNotebook()">Save Notebook</button>
+                <button onclick="newNotebook()">New Notebook</button>
+                <button class="clear-btn" onclick="addCodeCell()">+ Code</button>
+                <button class="clear-btn" onclick="window.location.reload()">Reset Session</button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- APP LAYOUT: SIDEBAR + CONTENT + DRAWERS -->
+    <div class="app-layout">
+        <!-- FIXED LEFT SIDEBAR -->
+        <aside class="sidebar">
+            <nav class="sidebar-nav">
+                <div id="nav-workspace" class="nav-item active" onclick="switchTab('workspace')" aria-label="Workspace">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                        <polyline points="9 22 9 12 15 12 15 22" />
+                    </svg>
+                    <span class="nav-label">Workspace</span>
+                </div>
+                <div id="nav-saved" class="nav-item" onclick="toggleDrawer('saved')" aria-label="Saved Notebooks">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                        <polyline points="17 21 17 13 7 13 7 21" />
+                        <polyline points="7 5 7 3 17 3 17 5" />
+                    </svg>
+                    <span class="nav-label">Saved</span>
+                </div>
+                <div id="nav-history" class="nav-item" onclick="toggleDrawer('history')" aria-label="History">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="9" />
+                        <polyline points="12 6 12 12 16 14" />
+                    </svg>
+                    <span class="nav-label">History</span>
+                </div>
+                <div id="nav-connections" class="nav-item" onclick="switchTab('connections')"
+                    aria-label="Database Connections">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <ellipse cx="12" cy="5" rx="9" ry="3" />
+                        <path d="M3 5V19A9 3 0 0 0 21 19V5" />
+                        <path d="M3 12A9 3 0 0 0 21 12" />
+                    </svg>
+                    <span class="nav-label">DB Connections</span>
+                </div>
+                <div id="nav-upload" class="nav-item" onclick="toggleDrawer('upload')" aria-label="File Upload">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="17 8 12 3 7 8" />
+                        <line x1="12" y1="3" x2="12" y2="15" />
+                    </svg>
+                    <span class="nav-label">Upload</span>
+                </div>
+                <div id="nav-conversations" class="nav-item" onclick="toggleDrawer('chats')" aria-label="Conversations">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                        class="lucide lucide-messages-square-icon lucide-messages-square">
+                        <path
+                            d="M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+                        <path
+                            d="M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1" />
+                    </svg>
+                    <span class="nav-label">Conversations</span>
+                </div>
+            </nav>
+            <div class="status-box">
+                <p>System: <span id="status-dot">●</span> <span id="status-text">Online</span></p>
+            </div>
+        </aside>
+
+        <!-- DRAWERS CONTAINER -->
+        <div class="drawers-container">
+            <!-- Saved Drawer -->
+            <div id="drawer-saved" class="drawer">
+                <div class="drawer-header">
+                    <h3>Saved Notebooks</h3>
+                    <button class="drawer-close" onclick="closeDrawer('saved')" aria-label="Close drawer">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M18 6l-12 12" />
+                            <path d="M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+                <div class="drawer-content">
+                    <div id="saved-list" class="history-list"></div>
+                </div>
+            </div>
+
+            <!-- History Drawer -->
+            <div id="drawer-history" class="drawer">
+                <div class="drawer-header">
+                    <h3>History</h3>
+                    <button class="drawer-close" onclick="closeDrawer('history')" aria-label="Close drawer">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M18 6l-12 12" />
+                            <path d="M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+                <div class="drawer-content">
+                    <div id="history-list"></div>
+                </div>
+            </div>
+
+            <!-- Upload Drawer -->
+            <div id="drawer-upload" class="drawer">
+                <div class="drawer-header">
+                    <h3>Upload Files</h3>
+                    <button class="drawer-close" onclick="closeDrawer('upload')" aria-label="Close drawer">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M18 6l-12 12" />
+                            <path d="M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+                <div class="drawer-content">
+                    <div class="upload-container" style="padding: 10px;">
+                        <p style="margin-bottom: 12px; font-size: 0.9rem; color: var(--text-secondary);">Select a
+                            document (PDF, DOCX, TXT) to upload and chat with.</p>
+                        <input type="file" id="file-input" accept=".txt,.pdf,.docx"
+                            style="display: block; margin-bottom: 16px; width: 100%; font-size: 0.9rem;">
+                        <button id="upload-btn" onclick="uploadFile()"
+                            style="width: 100%; padding: 10px; background: var(--accent); color: white; border: none; border-radius: var(--radius-sm); cursor: pointer; font-weight: 500;">Upload
+                            & Process</button>
+                        <div id="upload-status" style="margin-top: 16px; font-size: 0.85rem; line-height: 1.4;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chat List Drawer -->
+            <div id="drawer-chats" class="drawer">
+                <div class="drawer-header">
+                    <h3>Chats</h3>
+                    <button class="drawer-close" onclick="closeDrawer('chats')" aria-label="Close drawer">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M18 6l-12 12" />
+                            <path d="M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+                <div class="drawer-content">
+                    <button class="new-chat-btn-drawer" onclick="createNewChat()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                            style="margin-right: 6px;">
+                            <path d="M5 12h14" />
+                            <path d="M12 5v14" />
+                        </svg>
+                        New Chat
+                    </button>
+                    <div id="chat-list" class="chat-list"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- MAIN CONTENT AREA -->
+        <main class="content">
+            <!-- Workspace View (Main) -->
+            <div id="workspace-view" class="cell-container"></div>
+
+            <!-- Connections View -->
+            <div id="connections-view" class="cell-container" style="display:none;">
+                <h2 style="margin-bottom: 8px; color: #1e293b;">Database Connections</h2>
+                <div class="sidebar-section">
+                    <div id="connection-list"></div>
+                    <button class="add-conn-btn" onclick="toggleConnForm()">+ Add New Connection</button>
+                    <div id="conn-form" style="display:none;" class="conn-form">
+                        <input id="db-alias" placeholder="Connection Name">
+                        <input id="db-host" placeholder="Host">
+                        <input id="db-port" placeholder="Port" value="5432">
+                        <input id="db-name" placeholder="Database Name">
+                        <input id="db-user" placeholder="Username">
+                        <input id="db-pass" type="password" placeholder="Password">
+                        <button onclick="saveNewConnection()">Connect</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+    <!-- Floating AI Assistant Widget -->
+    <div id="ai-widget">
+        <!-- FAB Trigger -->
+        <button id="ai-fab" class="ai-fab" type="button" aria-label="Open AI Assistant">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                class="lucide lucide-sparkles">
+                <path
+                    d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z" />
+                <path d="M20 2v4" />
+                <path d="M22 4h-4" />
+                <circle cx="4" cy="20" r="2" />
+            </svg>
+        </button>
+
+        <!-- Mini Chat Popup -->
+        <div id="ai-mini" class="ai-mini" role="dialog" aria-label="AI Assistant" aria-hidden="true">
+            <!-- Resize Handle (visible only when docked) -->
+            <div class="ai-resize-handle"></div>
+
+            <!-- Header Bar -->
+            <div class="ai-mini-header">
+                <span class="ai-mini-title">AI Assistant</span>
+                <div class="ai-mini-header-actions">
+                    <button id="ai-chats-btn" class="ai-mini-icon" type="button" aria-label="View Chats"
+                        title="View Chats" onclick="toggleDrawer('chats')">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                        </svg>
+                    </button>
+                    <button id="ai-new-chat-btn" class="ai-mini-icon" type="button" aria-label="New Chat"
+                        title="New Chat" onclick="createNewChat()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M5 12h14" />
+                            <path d="M12 5v14" />
+                        </svg>
+                    </button>
+                    <button id="ai-mini-max" class="ai-mini-icon" type="button" aria-label="Expand">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="m7 15 5 5 5-5" />
+                            <path d="m7 9 5-5 5 5" />
+                        </svg>
+                    </button>
+                    <button id="ai-mini-close" class="ai-mini-icon" type="button" aria-label="Close">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M18 6 6 18" />
+                            <path d="M6 6 18 18" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Chat Body (scrollable) -->
+            <div id="ai-response-tray" class="ai-mini-body">
+                <div id="ai-content-area"></div>
+            </div>
+
+            <!-- Suggestion Chips -->
+            <div id="ai-suggestion-chips" class="ai-suggestion-chips"></div>
+
+            <!-- Bottom Input Area -->
+            <div class="ai-input-bar">
+                <!-- File chips area (shows attached files) -->
+                <div id="ai-file-chips" class="ai-file-chips"></div>
+
+                <!-- Main Input Container (Bordered Box) -->
+                <div class="ai-input-container">
+                    <!-- Textarea Row -->
+                    <textarea id="prompt-input" class="ai-mini-input" placeholder="Ask AI anything..."
+                        rows="1"></textarea>
+
+                    <!-- Bottom Toolbar -->
+                    <div class="ai-input-toolbar">
+                        <div class="ai-toolbar-left">
+                            <input type="file" id="ai-file-input" accept=".pdf,.xlsx,.xls,.csv,.json,.txt,.docx"
+                                multiple hidden>
+                            <button id="ai-attach-btn" class="ai-input-icon-plus" type="button" aria-label="Attach file"
+                                title="Upload files">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
+                                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round">
+                                    <path d="M5 12h14" />
+                                    <path d="M12 5v14" />
+                                </svg>
+                            </button>
+                        </div>
+
+                        <div class="ai-toolbar-right">
+                            <button id="ai-mic-btn" class="ai-input-icon" type="button" aria-label="Voice input"
+                                title="Voice input">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
+                                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round">
+                                    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                                    <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                                    <line x1="12" x2="12" y1="19" y2="22" />
+                                </svg>
+                            </button>
+
+                            <button id="run-btn" class="ai-send-btn-icon" type="button" aria-label="Send">
+                                <svg id="send-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20"
+                                    viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                    stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="m22 2-7 20-4-9-9-4Z" />
+                                    <path d="M22 2 11 13" />
+                                </svg>
+                                <svg id="stop-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20"
+                                    viewBox="0 0 24 24" fill="currentColor" style="display:none;">
+                                    <rect x="6" y="6" width="12" height="12" rx="2" />
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/script.js"></script>
+    <script src="/static/multi_chat_functions.js"></script>
+</body>
+
+</html>

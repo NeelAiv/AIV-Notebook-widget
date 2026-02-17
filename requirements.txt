@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+transformers
+accelerate
+bitsandbytes
+sentence-transformers
+psycopg2-binary
+python-dotenv
+torch
+nbformat
+
+
+requests 
+pypdf
+python-docx
+python-multipart
