@@ -485,6 +485,7 @@ body {
     border: 1px solid #e5e7eb;
     transition: background 0.2s, box-shadow 0.2s;
     position: relative;
+    background: #ffffff;
 }
 
 /* allow side icons to render fully */
@@ -567,27 +568,64 @@ body {
     width: 100%;
     border: none;
     outline: none;
-    resize: none;
     background: transparent;
-
+    border-radius: 6px;
     font-family: 'Fira Code', monospace;
-    font-size: 0.9rem;
-    line-height: 1.4;
+    font-size: 14px;
+    line-height: 1.6;
+    min-height: 40px;
+    padding: 8px 0;
+    resize: none;
+    overflow: hidden;
+}
 
-    padding: 12px 0 4px 0;
-    /* 🔑 aligns cursor with ▶ */
-    min-height: 22px;
+/* CodeMirror Integration */
+.CodeMirror {
+    background: transparent !important;
+    border: none !important;
+    font-family: 'Fira Code', monospace !important;
+    font-size: 14px !important;
+    line-height: 1.6 !important;
+    height: auto !important;
+    min-height: 40px !important;
+    color: #0f172a !important;
+}
+
+.CodeMirror-scroll {
+    overflow: hidden !important;
+}
+
+.CodeMirror-gutters {
+    background: transparent !important;
+    border-right: none !important;
+}
+
+.CodeMirror-linenumber {
+    color: transparent !important;
+}
+
+.CodeMirror-lines {
+    padding: 8px 0 !important;
+}
+
+.CodeMirror-line {
+    padding: 0 !important;
 }
 
 
 .code-placeholder {
     position: absolute;
-    /* 🔑 KEY FIX */
-    top: 12px;
-    left: 0;
+    top: 50%;
+    left: 8px;
+    transform: translateY(-50%);
     color: #999;
     pointer-events: none;
-    font-size: 0.9rem;
+    font-size: 14px;
+    font-family: 'Fira Code', monospace;
+    line-height: 1.6;
+    opacity: 1;
+    transition: opacity 0.2s ease;
+    z-index: 1;
 }
 
 .code-placeholder u {
@@ -601,15 +639,20 @@ body {
     font-family: 'Fira Code', monospace;
     font-size: 0.8rem;
     color: var(--text-secondary);
-    background: #e9ecef;
+    background: #ffffff;
     padding: 1px;
-    border-top: 3px solid #e5e7eb;
-    border-radius: 4px;
+    border-top: 1.3px solid #d1d5db;
+    border-radius: 0;
     /* 🔑 NEW: Handle overflow properly */
     width: 100%;
     overflow-x: auto;
     /* Scrollbar for wide tables */
     word-wrap: break-word;
+}
+
+/* Hide output container when empty (separator appears only with content) */
+.cell-output:empty {
+    display: none;
 }
 
 .cell-output pre {
@@ -1888,8 +1931,7 @@ button[id$="-btn"] {
     position: relative;
     padding: 0 !important;
     margin: 0 2px !important;
-    color: #5f6368;
-    /* neutral */
+    color: #5f6368; /* neutral */
     transition: background-color 0.2s ease, color 0.15s ease;
 }
 

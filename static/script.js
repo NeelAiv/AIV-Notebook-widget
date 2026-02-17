@@ -65,6 +65,33 @@ function autoResize(textarea) {
     }
 }
 
+// Initialize CodeMirror for syntax highlighting
+function initCodeMirror(textarea) {
+    if (!textarea || textarea.dataset.cmInitialized) return;
+    
+    const editor = CodeMirror.fromTextArea(textarea, {
+        mode: 'python',
+        lineNumbers: false,
+        lineWrapping: true,
+        indentUnit: 4,
+        indentWithTabs: false,
+        theme: 'default',
+        viewportMargin: Infinity,
+        autofocus: false,
+        scrollbarStyle: 'null'
+    });
+    
+    textarea.dataset.cmInitialized = 'true';
+    editor.on('change', () => {
+        const placeholder = textarea.previousElementSibling;
+        if (placeholder && placeholder.classList.contains('code-placeholder')) {
+            placeholder.style.opacity = editor.getValue() ? '0' : '1';
+        }
+    });
+    
+    return editor;
+}
+
 
 function focusAI() {
   const mini = document.getElementById("ai-mini");
@@ -404,7 +431,16 @@ window.onload = () => {
 
 async function runCode(id) {
     const codeEditor = document.querySelector(`#cell-${id} .code-editor`);
-    const code = codeEditor.value;
+    let code = '';
+    
+    // Get code from CodeMirror if initialized, otherwise from textarea
+    if (codeEditor.nextSibling && codeEditor.nextSibling.classList && codeEditor.nextSibling.classList.contains('CodeMirror')) {
+        const cm = codeEditor.nextSibling.CodeMirror;
+        code = cm ? cm.getValue() : codeEditor.value;
+    } else {
+        code = codeEditor.value;
+    }
+    
     const outDiv = document.getElementById(`out-${id}`);
     const btn = document.getElementById(`btn-${id}`);
     if (!pyodide) { outDiv.innerText = "⚠️ Kernel loading..."; return; }
@@ -478,7 +514,6 @@ function addCodeCell(button) {
     cellCount++;
     const cellHtml = `
        <div class="code-cell" id="cell-${cellCount}" onclick="activateCell(this)">
-            <!-- CONTROLS: Absolute Positioned Top Right -->
             <div class="cell-controls">
                 <button title="Move Up" onclick="event.stopPropagation(); moveCellUp(this)">${ICON_MOVE_UP}</button>
                 <button title="Move Down" onclick="event.stopPropagation(); moveCellDown(this)">${ICON_MOVE_DOWN}</button>
@@ -492,7 +527,7 @@ function addCodeCell(button) {
             </div>
             
             <div class="cell-content-part">
-                <div class="code-placeholder">Start coding or <u onclick="event.stopPropagation(); focusAI()">generate</u> with AI.</div>
+                <div class="code-placeholder">Start coding or <u onclick="event.stopPropagation(); focusAI()">generate</u></div>
                 <textarea class="code-editor" oninput="autoResize(this)" rows="1"></textarea>
                 <div class="cell-output" id="out-${cellCount}"></div>
             </div>
@@ -520,7 +555,16 @@ function addCodeCell(button) {
     // Auto-focus the new text area
     setTimeout(() => {
         const ta = document.querySelector(`#cell-${cellCount} textarea`);
-        if (ta) { autoResize(ta); ta.focus(); }
+        if (ta) { 
+            autoResize(ta); 
+            // Initialize CodeMirror for syntax highlighting
+            const editor = initCodeMirror(ta);
+            if (editor) {
+                editor.focus();
+            } else {
+                ta.focus();
+            }
+        }
         // activate the cell visually
         document.getElementById(`cell-${cellCount}`).classList.add('active');
     }, 50);
@@ -589,13 +633,6 @@ function updateSuggestionChips(chips) {
     });
     container.appendChild(btn);
   });
-
-  // Open AI panel if not already open
-  const mini = document.getElementById("ai-mini");
-  if (mini && !mini.classList.contains("open")) {
-    mini.classList.add("open");
-    mini.setAttribute("aria-hidden", "false");
-  }
 }
 
 /**
@@ -1658,9 +1695,18 @@ function addGeneratedCodeToCell(encodedCode) {
 
   if (!lastEditor) return;
 
-  lastEditor.value = code;
-  autoResize(lastEditor);
-  lastEditor.focus();
+  // Check if CodeMirror is initialized
+  if (lastEditor.nextSibling && lastEditor.nextSibling.classList && lastEditor.nextSibling.classList.contains('CodeMirror')) {
+    const cm = lastEditor.nextSibling.CodeMirror;
+    if (cm) {
+      cm.setValue(code);
+      cm.focus();
+    }
+  } else {
+    lastEditor.value = code;
+    autoResize(lastEditor);
+    lastEditor.focus();
+  }
 }
 
 
@@ -1831,9 +1877,15 @@ async function saveNotebook() {
         const outputDiv = cell.querySelector('.cell-output');
 
         if (codeEditor) {
+            let code = codeEditor.value;
+            // Check if CodeMirror is initialized
+            if (codeEditor.nextSibling && codeEditor.nextSibling.classList && codeEditor.nextSibling.classList.contains('CodeMirror')) {
+                const cm = codeEditor.nextSibling.CodeMirror;
+                if (cm) code = cm.getValue();
+            }
             cells.push({
                 cell_type: 'code',
-                source: codeEditor.value,
+                source: code,
                 output: outputDiv ? outputDiv.innerHTML : ''
             });
         } else if (textEditor) {
@@ -1931,8 +1983,14 @@ async function openNotebook(name) {
             const textarea = currentCell.querySelector('.code-editor');
 
             if (textarea) {
-                textarea.value = cellData.source || '';
-                autoResize(textarea);
+                // Check if CodeMirror is initialized
+                if (textarea.nextSibling && textarea.nextSibling.classList && textarea.nextSibling.classList.contains('CodeMirror')) {
+                    const cm = textarea.nextSibling.CodeMirror;
+                    if (cm) cm.setValue(cellData.source || '');
+                } else {
+                    textarea.value = cellData.source || '';
+                    autoResize(textarea);
+                }
             }
 
             if (cellData.output) {
@@ -2334,12 +2392,18 @@ function downloadAsJupyter() {
         const textEditor = cellDiv.querySelector('.text-editor');
 
         if (textarea) { // Code Cell
+            let code = textarea.value;
+            // Check if CodeMirror is initialized
+            if (textarea.nextSibling && textarea.nextSibling.classList && textarea.nextSibling.classList.contains('CodeMirror')) {
+                const cm = textarea.nextSibling.CodeMirror;
+                if (cm) code = cm.getValue();
+            }
             cells.push({
                 "cell_type": "code",
                 "execution_count": null,
                 "metadata": {},
                 "outputs": [], // Logic to capture outputs would go here
-                "source": textarea.value.split('\n').map(line => line + '\n')
+                "source": code.split('\n').map(line => line + '\n')
             });
         } else if (textEditor) { // Markdown/Text Cell
             cells.push({
