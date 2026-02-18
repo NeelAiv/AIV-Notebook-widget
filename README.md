@@ -98,3 +98,27 @@ The `docker-compose.yml` is configured to persist your notebooks, connection set
 You can customize the application behavior by creating a `.env` file in the root directory. This can be used to configure database connection defaults or AI model parameters if applicable.
 
 ---
+
+
+# ⌨️ Keyboard Shortcuts
+
+## ▶ Code
+- **Shift + Enter** → Run current code cell
+
+## 🤖 AI & Chat
+- **Ctrl + Enter** → Open AI Assistant  
+- **Ctrl + Shift + C** → Open Conversations  
+- **Ctrl + Shift + N** → New Chat  
+
+## 📒 Notebook
+- **Ctrl + Alt + N** → New Notebook  
+- **Ctrl + S** → Save Notebook  
+- **Ctrl + Shift + S** → Open Saved  
+- **Ctrl + Shift + H** → Open History  
+
+## ❓ Help
+- **Ctrl + ?** → Show all shortcuts  
+
+---
+
+> 💡 **Mac Users:** Use `Cmd` instead of `Ctrl`
