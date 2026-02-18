@@ -27,8 +27,8 @@
 }
 
 .loading-gif {
-    max-width: 150px;
-    max-height: 150px;
+    max-width: 250px;
+    max-height: 250px;
     width: auto;
     height: auto;
 }
@@ -454,6 +454,11 @@ body {
 
 /* ======================================================
    MAIN CONTENT
+   LAYOUT: Flexbox container with responsive margins
+   When AI panel is docked (maximized), margin-right is adjusted
+   to prevent content overlap and ensure full visibility.
+   CSS Custom Property --ai-panel-width synchronizes panel width
+   and content margin for consistent responsive behavior.
 ====================================================== */
 .content {
     flex: 1;
@@ -472,13 +477,13 @@ body {
 
 /* Push content left when AI panel is docked */
 .content.ai-docked {
-    margin-right: 450px;
+    margin-right: var(--ai-panel-width, 450px);
 }
 
 /* When both drawer and AI are open */
 .content.drawer-open.ai-docked {
     margin-left: 320px;
-    margin-right: 450px;
+    margin-right: var(--ai-panel-width, 450px);
 }
 
 /* ======================================================
@@ -486,6 +491,7 @@ body {
 ====================================================== */
 .cell-container {
     flex: 1;
+    width: 100%;
     overflow-y: auto;
     overflow-x: hidden;
     padding: 20px 20px 0 20px;
@@ -1578,7 +1584,7 @@ button[id$="-btn"] {
     bottom: 0;
 
     /* Fixed width and full height - uses custom property for resize */
-    width: var(--ai-panel-width, 500px);
+    width: var(--ai-panel-width, 450px);
     height: calc(100vh - 56px);
     max-height: none;
 
@@ -2012,7 +2018,8 @@ button[id$="-btn"] {
     position: relative;
     padding: 0 !important;
     margin: 0 2px !important;
-    color: #5f6368; /* neutral */
+    color: #5f6368;
+    /* neutral */
     transition: background-color 0.2s ease, color 0.15s ease;
 }
 
@@ -2478,12 +2485,17 @@ button[id$="-btn"] {
     z-index: 2000;
     animation: fadeIn 0.18s ease-out;
     -webkit-backdrop-filter: blur(4px);
-            backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
 }
 
 @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
 }
 
 .custom-dialog-modal {
@@ -2492,13 +2504,20 @@ button[id$="-btn"] {
     box-shadow: 0 30px 60px rgba(2, 6, 23, 0.35);
     max-width: 640px;
     width: min(640px, 92vw);
-    animation: slideUp 0.28s cubic-bezier(.2,.9,.2,1);
+    animation: slideUp 0.28s cubic-bezier(.2, .9, .2, 1);
     overflow: visible;
 }
 
 @keyframes slideUp {
-    from { opacity: 0; transform: translateY(10px); }
-    to   { opacity: 1; transform: translateY(0); }
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
 .custom-dialog-header {
@@ -2506,19 +2525,21 @@ button[id$="-btn"] {
     align-items: center;
     justify-content: space-between;
     padding: 22px 26px 18px 26px;
-    border-bottom: none; /* cleaner look like the reference */
+    border-bottom: none;
+    /* cleaner look like the reference */
 }
 
 .custom-dialog-title {
     margin: 0;
-    font-size: 1.5rem; /* ~24px */
+    font-size: 1.5rem;
+    /* ~24px */
     font-weight: 800;
     color: var(--text-primary);
 }
 
 .custom-dialog-close {
-    background: rgba(15,23,42,0.03);
-    border: 1px solid rgba(15,23,42,0.06);
+    background: rgba(15, 23, 42, 0.03);
+    border: 1px solid rgba(15, 23, 42, 0.06);
     width: 40px;
     height: 40px;
     border-radius: 9999px;
@@ -2531,7 +2552,7 @@ button[id$="-btn"] {
 }
 
 .custom-dialog-close:hover {
-    background: rgba(15,23,42,0.06);
+    background: rgba(15, 23, 42, 0.06);
     transform: translateY(-1px);
     color: var(--text-primary);
 }
@@ -2560,14 +2581,15 @@ button[id$="-btn"] {
 
 .custom-dialog-input:focus {
     border-color: var(--accent);
-    box-shadow: 0 6px 20px rgba(37,99,235,0.12);
+    box-shadow: 0 6px 20px rgba(37, 99, 235, 0.12);
 }
 
 .custom-dialog-actions {
     display: flex;
     gap: 18px;
     padding: 18px 26px 26px 26px;
-    justify-content: center; /* center the two-pill buttons */
+    justify-content: center;
+    /* center the two-pill buttons */
 }
 
 .custom-dialog-btn {
@@ -2582,53 +2604,70 @@ button[id$="-btn"] {
 
 .custom-dialog-btn-cancel {
     background: #ffffff;
-    color: var(--accent);
+    color: #4a505f;
     border: 2px solid #e6e9ef;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.8);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.18s ease;
 }
 
-.custom-dialog-btn-cancel:hover {
+
+/* Default hover — primary context (Save / New / OK): blue border */
+.custom-dialog-btn-cancel:hover,
+.custom-dialog-btn-cancel[data-context="primary"]:hover {
     background: #fbfdff;
+    border-color: var(--accent);
     transform: translateY(-2px);
 }
+
+/* Destructive context (Delete): red border on hover */
+.custom-dialog-btn-cancel[data-context="danger"]:hover {
+    background: #fff8f8;
+    border-color: #ef4444;
+    transform: translateY(-2px);
+}
+
 
 .custom-dialog-btn-confirm {
     background: var(--accent);
     color: #ffffff;
     border: none;
-    box-shadow: 0 8px 30px rgba(37,99,235,0.18);
+    box-shadow: 0 8px 30px rgba(37, 99, 235, 0.18);
 }
 
 .custom-dialog-btn-confirm:hover {
     transform: translateY(-2px);
-    box-shadow: 0 14px 40px rgba(37,99,235,0.22);
+    box-shadow: 0 14px 40px rgba(37, 99, 235, 0.22);
 }
 
 .custom-dialog-btn-confirm.danger {
-    background: #ef4444; /* destructive red */
-    box-shadow: 0 14px 40px rgba(239,68,68,0.18);
+    background: #ef4444;
+    /* destructive red */
+    box-shadow: 0 14px 40px rgba(239, 68, 68, 0.18);
 }
 
 .custom-dialog-btn-confirm.danger:hover {
     background: #ff5757;
-    box-shadow: 0 20px 50px rgba(239,68,68,0.24);
+    box-shadow: 0 20px 50px rgba(239, 68, 68, 0.24);
 }
 
 .ai-fab {
     width: 55px;
     height: 55px;
     padding: 0;
-    border-radius: 50%;     /* remove this if you don't want circle */
+    border-radius: 50%;
+    /* remove this if you don't want circle */
     display: flex;
     align-items: center;
     justify-content: center;
-    overflow: hidden;       /* keeps it clean */
+    overflow: hidden;
+    /* keeps it clean */
 }
 
 .ai-fab img {
     width: 100%;
     height: 100%;
-    object-fit: contain;    /* IMPORTANT: shows whole image */
+    object-fit: contain;
+    /* IMPORTANT: shows whole image */
 }
 
 /* ======================================================
