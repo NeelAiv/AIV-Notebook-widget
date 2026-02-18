@@ -39,7 +39,7 @@ class KeyboardShortcutsManager {
       shift: false,
       alt: true,
       action: () => this.handleOpenAIPopup(),
-      description: 'Open AI Popup'
+      description: 'AI Assistant'
     });
 
     // Open Conversation Drawer: Ctrl + Shift + C
@@ -103,14 +103,7 @@ class KeyboardShortcutsManager {
     });
 
     // Open Help: Ctrl + ?
-    this.registerShortcut({
-      key: 'CtrlQuestion',
-      ctrl: true,
-      shift: false,
-      alt: false,
-      action: () => this.handleOpenHelp(),
-      description: 'Show Keyboard Shortcuts Help'
-    });
+
   }
 
   /**

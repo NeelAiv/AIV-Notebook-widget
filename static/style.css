@@ -27,8 +27,8 @@
 }
 
 .loading-gif {
-    max-width: 150px;
-    max-height: 150px;
+    max-width: 250px;
+    max-height: 250px;
     width: auto;
     height: auto;
 }
@@ -454,6 +454,11 @@ body {
 
 /* ======================================================
    MAIN CONTENT
+   LAYOUT: Flexbox container with responsive margins
+   When AI panel is docked (maximized), margin-right is adjusted
+   to prevent content overlap and ensure full visibility.
+   CSS Custom Property --ai-panel-width synchronizes panel width
+   and content margin for consistent responsive behavior.
 ====================================================== */
 .content {
     flex: 1;
@@ -472,13 +477,13 @@ body {
 
 /* Push content left when AI panel is docked */
 .content.ai-docked {
-    margin-right: 450px;
+    margin-right: var(--ai-panel-width, 450px);
 }
 
 /* When both drawer and AI are open */
 .content.drawer-open.ai-docked {
     margin-left: 320px;
-    margin-right: 450px;
+    margin-right: var(--ai-panel-width, 450px);
 }
 
 /* ======================================================
@@ -486,6 +491,7 @@ body {
 ====================================================== */
 .cell-container {
     flex: 1;
+    width: 100%;
     overflow-y: auto;
     overflow-x: hidden;
     padding: 20px 20px 0 20px;
@@ -1578,7 +1584,7 @@ button[id$="-btn"] {
     bottom: 0;
 
     /* Fixed width and full height - uses custom property for resize */
-    width: var(--ai-panel-width, 500px);
+    width: var(--ai-panel-width, 450px);
     height: calc(100vh - 56px);
     max-height: none;
 

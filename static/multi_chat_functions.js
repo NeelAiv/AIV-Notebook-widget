@@ -3,12 +3,22 @@
 // ======================================================
 
 /**
- * Extract meaningful title from question (2-3 words)
- * Removes stop words and returns clean title
+ * Extract meaningful title from AI response text (3-4 words)
+ * Strips markdown, removes stop words, returns clean title.
  */
-function extractChatTitle(question) {
-  if (!question || typeof question !== 'string') return 'New Chat';
-  
+function extractChatTitle(text) {
+  if (!text || typeof text !== 'string') return 'New Chat';
+
+  // Strip markdown syntax
+  const plain = text
+    .replace(/```[\s\S]*?```/g, '')   // remove code blocks
+    .replace(/`[^`]*`/g, '')           // remove inline code
+    .replace(/[#*_~>\[\]()!]/g, '')    // remove markdown chars
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!plain) return 'New Chat';
+
   // Common stop words to exclude
   const stopWords = new Set([
     'what', 'is', 'how', 'can', 'the', 'a', 'an', 'to', 'do', 'does', 'did',
@@ -19,22 +29,21 @@ function extractChatTitle(question) {
     'out', 'off', 'over', 'under', 'again', 'further', 'then', 'once', 'here',
     'there', 'when', 'where', 'why', 'which', 'who', 'whom', 'that', 'this',
     'these', 'those', 'i', 'you', 'he', 'she', 'it', 'we', 'they', 'me', 'him',
-    'her', 'us', 'them', 'my', 'your', 'his', 'her', 'its', 'our', 'their'
+    'her', 'us', 'them', 'my', 'your', 'his', 'its', 'our', 'their', 'sure',
+    'here', 'below', 'following', 'based', 'using', 'use', 'used', 'also',
+    'note', 'example', 'result', 'output', 'returns', 'return'
   ]);
-  
-  // Remove punctuation and split into words
-  const words = question
+
+  const words = plain
     .toLowerCase()
-    .replace(/[^\w\s]/g, '') // Remove punctuation
-    .split(/\s+/) // Split by whitespace
-    .filter(word => word.length > 0 && !stopWords.has(word)); // Filter stop words
-  
-  // Take first 2-3 words
-  const titleWords = words.slice(0, 3);
-  
+    .replace(/[^\w\s]/g, '')
+    .split(/\s+/)
+    .filter(word => word.length > 1 && !stopWords.has(word));
+
+  // Take first 3-4 meaningful words
+  const titleWords = words.slice(0, 4);
   if (titleWords.length === 0) return 'New Chat';
-  
-  // Capitalize each word
+
   return titleWords
     .map(word => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
@@ -52,72 +61,158 @@ function formatChatCreatedTime(timestamp) {
   });
 }
 
+// ======================================================
+// POPUP STATE HELPERS
+// ======================================================
+
+function isPopupOpen() {
+  const mini = document.getElementById('ai-mini');
+  return mini && mini.classList.contains('open');
+}
+
+function isPopupMaximized() {
+  const mini = document.getElementById('ai-mini');
+  return mini && mini.classList.contains('docked');
+}
+
 /**
- * Create a new chat session
+ * Open AI popup in MINIMIZED state (floating, not docked)
+ */
+function openPopupMinimized() {
+  const mini = document.getElementById('ai-mini');
+  const maxBtn = document.getElementById('ai-mini-max');
+  const content = document.querySelector('.content');
+  if (!mini) return;
+
+  mini.classList.add('open');
+  mini.classList.remove('docked');
+  mini.setAttribute('aria-hidden', 'false');
+  if (maxBtn) updateMaximizeButton(maxBtn, false);
+  if (content) {
+    content.classList.remove('ai-docked');
+    content.style.marginRight = '';
+  }
+  localStorage.setItem('ai-popup-mode', 'min');
+  const input = document.getElementById('prompt-input');
+  if (input) input.focus();
+}
+
+/**
+ * Open AI popup in MAXIMIZED state (docked panel)
+ */
+function openPopupMaximized() {
+  const mini = document.getElementById('ai-mini');
+  const maxBtn = document.getElementById('ai-mini-max');
+  const content = document.querySelector('.content');
+  if (!mini) return;
+
+  const width = mini.style.getPropertyValue('--ai-panel-width') || '450px';
+  mini.classList.add('open');
+  mini.classList.add('docked');
+  mini.setAttribute('aria-hidden', 'false');
+  if (maxBtn) updateMaximizeButton(maxBtn, true);
+  if (content) {
+    content.classList.add('ai-docked');
+    content.style.setProperty('--ai-panel-width', width);
+    content.style.marginRight = width;
+  }
+  localStorage.setItem('ai-popup-mode', 'max');
+  const input = document.getElementById('prompt-input');
+  if (input) input.focus();
+}
+
+// ======================================================
+// CORE CHAT FUNCTIONS
+// ======================================================
+
+/**
+ * Create a new chat session.
+ * Popup state machine:
+ *   Closed      → open MINIMIZED
+ *   MINIMIZED   → stay MINIMIZED, swap content
+ *   MAXIMIZED   → convert to MINIMIZED, swap content
  */
 function createNewChat() {
   // Save current chat before creating new one
   if (currentChatId) {
     saveCurrentChat();
   }
-  
+
   const newChat = {
     id: 'chat_' + Date.now(),
+    notebookId: currentNotebookId,
     title: 'New Chat',
     messages: [],
     chatHistory: [],
-    createdAt: Date.now(),
-    updatedAt: Date.now()
+    createdAt: Date.now()
   };
-  
+
   chats.push(newChat);
   currentChatId = newChat.id;
-  
+
   // Clear UI
   clearChatUI();
-  
-  // Update sidebar
+
+  // Update drawer (preserves order — new chat at top since it has latest createdAt)
   renderChatList();
-  
+
   // Save to localStorage
   saveChatsToLocalStorage();
-  
-  // Close drawer if open
-  closeDrawer('chats');
+
+  // Popup state machine
+  if (!isPopupOpen()) {
+    openPopupMinimized();
+  } else if (isPopupMaximized()) {
+    openPopupMinimized(); // MAXIMIZED → MINIMIZED
+  }
+  // If already MINIMIZED, stay as-is
 }
 
 /**
- * Switch to a different chat
+ * Switch to a different chat.
+ * Popup state machine:
+ *   Closed    → open MAXIMIZED
+ *   MINIMIZED → convert to MAXIMIZED
+ *   MAXIMIZED → stay MAXIMIZED, swap content
+ * Drawer stays open. Scroll position preserved.
  */
 function switchChat(chatId) {
   if (chatId === currentChatId) {
-    closeDrawer('chats');
-    return; // Already on this chat
+    // Already on this chat — just ensure popup is maximized
+    if (!isPopupOpen() || !isPopupMaximized()) {
+      openPopupMaximized();
+    }
+    return;
   }
-  
+
   // Save current chat before switching
   if (currentChatId) {
     saveCurrentChat();
   }
-  
+
   // Switch to new chat
   currentChatId = chatId;
-  
-  // Load chat to UI
+
+  // Load chat content into UI
   loadChatToUI(chatId);
-  
-  // Update sidebar active state
-  renderChatList();
-  
+
+  // Update active state in drawer WITHOUT re-rendering (preserves scroll position)
+  document.querySelectorAll('.chat-list-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.chatId === chatId);
+  });
+
   // Save current chat ID
   saveChatsToLocalStorage();
-  
-  // Close drawer
-  closeDrawer('chats');
+
+  // Popup state machine — always open/stay MAXIMIZED when clicking existing chat
+  if (!isPopupOpen() || !isPopupMaximized()) {
+    openPopupMaximized();
+  }
+  // Drawer stays open — do NOT call closeDrawer
 }
 
 /**
- * Save current chat state
+ * Save current chat state to the chats array
  */
 function saveCurrentChat() {
   const chat = chats.find(c => c.id === currentChatId);
@@ -126,7 +221,7 @@ function saveCurrentChat() {
       prompt: pair.prompt
     }))));
     chat.chatHistory = JSON.parse(JSON.stringify(chatHistory));
-    chat.updatedAt = Date.now();
+    // Do NOT update createdAt — sort order must remain immutable
   }
 }
 
@@ -136,13 +231,13 @@ function saveCurrentChat() {
 function loadChatToUI(chatId) {
   const chat = chats.find(c => c.id === chatId);
   if (!chat) return;
-  
+
   // Clear current UI
   clearChatUI();
-  
+
   // Restore chat history
   chatHistory = JSON.parse(JSON.stringify(chat.chatHistory || []));
-  
+
   // Re-render messages from chat history
   renderMessagesFromHistory();
 }
@@ -165,12 +260,12 @@ function clearChatUI() {
 function renderMessagesFromHistory() {
   const contentArea = document.getElementById('ai-content-area');
   if (!contentArea) return;
-  
+
   // Process pairs from chatHistory (user + assistant)
   for (let i = 0; i < chatHistory.length; i += 2) {
     const userMsg = chatHistory[i];
     const assistantMsg = chatHistory[i + 1];
-    
+
     if (userMsg && userMsg.role === 'user') {
       // Create user bubble
       const userBubble = document.createElement('div');
@@ -186,7 +281,7 @@ function renderMessagesFromHistory() {
       userBubble.style.overflowWrap = 'break-word';
       userBubble.innerText = userMsg.content;
       contentArea.appendChild(userBubble);
-      
+
       // Create assistant bubble if exists
       let assistantBubble = null;
       if (assistantMsg && assistantMsg.role === 'assistant') {
@@ -197,27 +292,27 @@ function renderMessagesFromHistory() {
         assistantBubble.style.border = '1px solid #e6edf3';
         assistantBubble.style.borderRadius = '10px';
         assistantBubble.style.margin = '8px 0';
-        
+
         // Render response
         const header = document.createElement('div');
         header.style.display = 'flex';
         header.style.alignItems = 'center';
         header.style.gap = '10px';
         header.innerHTML = '<strong>Assistant</strong>';
-        
+
         const body = document.createElement('div');
         body.style.marginTop = '8px';
-        
+
         // Render markdown
         const rawHtml = marked.parse(assistantMsg.content || '');
         const sanitized = DOMPurify.sanitize(rawHtml);
         body.innerHTML = sanitized;
-        
+
         assistantBubble.appendChild(header);
         assistantBubble.appendChild(body);
         contentArea.appendChild(assistantBubble);
       }
-      
+
       // Track in messagePairs
       const pairIndex = messagePairs.length;
       messagePairs.push({
@@ -225,12 +320,12 @@ function renderMessagesFromHistory() {
         assistantBubble: assistantBubble,
         prompt: userMsg.content
       });
-      
+
       // Add edit button
       addEditButton(userBubble, userMsg.content, pairIndex);
     }
   }
-  
+
   // Scroll to bottom
   const tray = document.getElementById('ai-response-tray');
   if (tray) {
@@ -239,52 +334,54 @@ function renderMessagesFromHistory() {
 }
 
 /**
- * Render chat list in sidebar
+ * Render chat list in sidebar.
+ * Sort: newest createdAt at top (descending). Order is immutable.
  */
 function renderChatList() {
   const chatList = document.getElementById('chat-list');
   if (!chatList) return;
-  
+
+  // Preserve scroll position
+  const scrollTop = chatList.scrollTop;
+
   chatList.innerHTML = '';
-  
+
   if (chats.length === 0) {
-    chatList.innerHTML = '<div class="chat-list-empty">No chats yet.<br>Click "New Chat" to start.</div>';
+    chatList.innerHTML = '<div class="chat-list-empty">No chats yet.<br>Click the AI button to start.</div>';
     return;
   }
-  
-  // Sort chats by updatedAt (newest first)
-  const sortedChats = [...chats].sort((a, b) => b.updatedAt - a.updatedAt);
-  
-  // Delete button SVG
+
+  // Sort by createdAt descending (newest first) — immutable order
+  const sortedChats = [...chats].sort((a, b) => b.createdAt - a.createdAt);
+
+  // Icons
   const trashIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`;
-  
-  // Edit/Pencil SVG
   const pencilIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-pen-line-icon lucide-pen-line"><path d="M13 21h8"/><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/></svg>`;
-  
+
   sortedChats.forEach(chat => {
     const item = document.createElement('div');
     item.className = 'chat-list-item' + (chat.id === currentChatId ? ' active' : '');
     item.dataset.chatId = chat.id;
-    
-    // Add a wrapper for title and date
+
+    // Content wrapper (title + date)
     const contentWrapper = document.createElement('div');
     contentWrapper.style.flex = '1';
     contentWrapper.style.minWidth = '0';
     contentWrapper.style.cursor = 'pointer';
     contentWrapper.onclick = () => switchChat(chat.id);
-    
+
     const title = document.createElement('div');
     title.className = 'chat-title';
     title.textContent = chat.title || 'New Chat';
-    
+
     const date = document.createElement('div');
     date.className = 'chat-date';
     date.textContent = formatChatCreatedTime(chat.createdAt || Date.now());
-    
+
     contentWrapper.appendChild(title);
     contentWrapper.appendChild(date);
-    
-    // Add edit button
+
+    // Edit button
     const editBtn = document.createElement('button');
     editBtn.className = 'chat-edit-btn';
     editBtn.setAttribute('aria-label', 'Rename chat');
@@ -293,51 +390,36 @@ function renderChatList() {
       e.stopPropagation();
       startChatRename(chat.id);
     };
-    
-    // Add delete button
+
+    // Delete button
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'delete-db-btn';
     deleteBtn.innerHTML = trashIcon;
     deleteBtn.onclick = (e) => deleteChat(e, chat.id);
-    
+
     item.appendChild(contentWrapper);
     item.appendChild(editBtn);
     item.appendChild(deleteBtn);
     chatList.appendChild(item);
   });
+
+  // Restore scroll position
+  chatList.scrollTop = scrollTop;
 }
 
 /**
- * Format date for chat list
+ * Update chat title from first AI response.
+ * Only fires once — when title is still the placeholder 'New Chat'.
  */
-function formatChatDate(timestamp) {
-  const now = Date.now();
-  const diff = now - timestamp;
-  
-  const minutes = Math.floor(diff / 60000);
-  const hours = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
-  
-  if (minutes < 1) return 'Just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  if (days < 7) return `${days}d ago`;
-  
-  const date = new Date(timestamp);
-  return date.toLocaleDateString();
-}
-
-/**
- * Update chat title from first message
- */
-function updateChatTitle(chatId, title) {
+function updateChatTitle(chatId, aiResponseText) {
   const chat = chats.find(c => c.id === chatId);
   if (chat && chat.title === 'New Chat') {
-    // Extract meaningful 2-3 word title from the question
-    const cleanTitle = extractChatTitle(title);
+    const cleanTitle = extractChatTitle(aiResponseText);
     chat.title = cleanTitle || 'New Chat';
-    chat.updatedAt = Date.now();
-    renderChatList();
+    // Do NOT update createdAt — sort order must remain immutable
+    // Update only the title text in the DOM (no full re-render to preserve scroll)
+    const titleEl = document.querySelector(`[data-chat-id="${chatId}"] .chat-title`);
+    if (titleEl) titleEl.textContent = chat.title;
     saveChatsToLocalStorage();
   }
 }
@@ -350,7 +432,7 @@ function startChatRename(chatId) {
   if (!item) return;
 
   const titleDiv = item.querySelector('.chat-title');
-  if (!titleDiv || item.querySelector('input')) return; // Avoid duplicate inputs
+  if (!titleDiv || item.querySelector('input')) return;
 
   const current = titleDiv.textContent;
 
@@ -359,7 +441,6 @@ function startChatRename(chatId) {
   input.value = current;
   input.className = 'chat-title-input';
 
-  // Replace title with input
   titleDiv.replaceWith(input);
   input.focus();
   input.select();
@@ -369,38 +450,34 @@ function startChatRename(chatId) {
     const chat = chats.find(c => c.id === chatId);
     if (chat) {
       chat.title = value;
-      chat.updatedAt = Date.now();
       saveChatsToLocalStorage();
       renderChatList();
     }
   }
 
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      finish(input.value);
-    } else if (e.key === 'Escape') {
-      renderChatList();
-    }
+    if (e.key === 'Enter') finish(input.value);
+    else if (e.key === 'Escape') renderChatList();
   });
 
   input.addEventListener('blur', () => finish(input.value));
 }
 
 /**
- * Save chats to localStorage
+ * Save chats to localStorage — merges into existing data (no overwrite)
  */
 function saveChatsToLocalStorage() {
   try {
+    const existing = JSON.parse(localStorage.getItem('notebook_chats') || '{}');
     const data = {
+      ...existing,
       currentNotebookId,
-      notebooks: {
-        [currentNotebookId]: {
-          currentChatId,
-          chats: chats
-        }
-      }
     };
-    
+    if (!data.notebooks) data.notebooks = {};
+    data.notebooks[currentNotebookId] = {
+      currentChatId,
+      chats: chats
+    };
     localStorage.setItem('notebook_chats', JSON.stringify(data));
   } catch (e) {
     console.error('Failed to save chats to localStorage:', e);
@@ -408,84 +485,69 @@ function saveChatsToLocalStorage() {
 }
 
 /**
- * Load chats from localStorage
+ * Load chats from localStorage for the current notebook.
+ * Filters by notebookId to ensure no cross-notebook leakage.
  */
 function loadChatsFromLocalStorage() {
   try {
     const data = JSON.parse(localStorage.getItem('notebook_chats'));
     if (data && data.notebooks && data.notebooks[currentNotebookId]) {
       const notebook = data.notebooks[currentNotebookId];
-      chats = notebook.chats || [];
+      // Filter to only chats belonging to this notebook (defense in depth)
+      chats = (notebook.chats || []).filter(
+        c => !c.notebookId || c.notebookId === currentNotebookId
+      );
       currentChatId = notebook.currentChatId;
-      
+
       // Load the current chat
       if (currentChatId && chats.find(c => c.id === currentChatId)) {
         loadChatToUI(currentChatId);
       } else if (chats.length > 0) {
-        // Load most recent chat
-        const sortedChats = [...chats].sort((a, b) => b.updatedAt - a.updatedAt);
-        currentChatId = sortedChats[0].id;
+        // Load most recently created chat
+        const sorted = [...chats].sort((a, b) => b.createdAt - a.createdAt);
+        currentChatId = sorted[0].id;
         loadChatToUI(currentChatId);
       }
     }
-    
-    // If no chats exist, create first one
-    if (chats.length === 0) {
-      createNewChat();
-    }
-    
-    // Render chat list
+
+    // Do NOT auto-create chats here.
+    // New notebooks start empty; first FAB click triggers chat creation.
     renderChatList();
   } catch (e) {
     console.error('Failed to load chats from localStorage:', e);
-    // Create initial chat on error
-    createNewChat();
+    renderChatList();
   }
 }
+
 /**
  * Delete a chat by ID
  */
 async function deleteChat(event, chatId) {
   event.stopPropagation();
-  
+
   const chat = chats.find(c => c.id === chatId);
   if (!chat) return;
-  
-  // Show confirmation dialog
+
   if (!await customConfirm(`Delete chat "${chat.title}"? This action cannot be undone.`, true)) {
     return;
   }
-  
+
   try {
-    // Remove chat from chats array
     chats = chats.filter(c => c.id !== chatId);
-    
-    // If deleted chat is the current chat, switch to another one
+
     if (currentChatId === chatId) {
       if (chats.length > 0) {
-        // Switch to the most recent chat
-        const sortedChats = [...chats].sort((a, b) => b.updatedAt - a.updatedAt);
-        currentChatId = sortedChats[0].id;
+        const sorted = [...chats].sort((a, b) => b.createdAt - a.createdAt);
+        currentChatId = sorted[0].id;
         loadChatToUI(currentChatId);
       } else {
-        // Create a new chat if none exist
         clearChatUI();
-        createNewChat();
-        return; // createNewChat will handle rendering and saving
+        currentChatId = null;
       }
     }
-    
-    // Save to localStorage
+
     saveChatsToLocalStorage();
-    
-    // Re-render chat list
     renderChatList();
-    
-    // Remove the item from DOM
-    const item = event.target.closest('.chat-list-item');
-    if (item) {
-      item.remove();
-    }
   } catch (e) {
     console.error('Failed to delete chat:', e);
     await customAlert('Failed to delete chat. Please try again.');

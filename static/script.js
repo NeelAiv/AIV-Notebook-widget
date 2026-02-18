@@ -152,9 +152,9 @@ let currentNotebookId = 'default_notebook';
 // ICON SVG CONSTANTS
 // =======================
 
-const ICON_MAXIMIZE = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="m21 3-7 7"/><path d="m3 21 7-7"/><path d="M9 21H3v-6"/></svg>`;
+const ICON_MAXIMIZE = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-maximize"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>`;
 
-const ICON_MINIMIZE = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-minimize-icon lucide-minimize"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg>`;
+const ICON_MINIMIZE = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-minimize"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg>`;
 
 const ICON_BOLD = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8"/></svg>`;
 
@@ -550,6 +550,7 @@ window.onload = () => {
   loadConnections();
   initPyodide();
   initAIWidget();
+  loadChatsFromLocalStorage();
   setInterval(checkStatus, 180000); // 3 minutes
 
   document.getElementById("run-btn")?.addEventListener("click", runAIQuery);
@@ -958,385 +959,21 @@ function editMessage(messageIndex) {
   messagePairs.splice(messageIndex);
 }
 
+
 // ======================================================
-// MULTI-CHAT SYSTEM FUNCTIONS
+// (Multi-chat functions are defined in multi_chat_functions.js)
 // ======================================================
 
-/**
- * Create a new chat session
- */
-function createNewChat() {
-  // Save current chat before creating new one
-  if (currentChatId) {
-    saveCurrentChat();
-  }
-  
-  const newChat = {
-    id: 'chat_' + Date.now(),
-    title: 'New Chat',
-    messages: [],
-    chatHistory: [],
-    createdAt: Date.now(),
-    updatedAt: Date.now()
-  };
-  
-  chats.push(newChat);
-  currentChatId = newChat.id;
-  
-  // Clear UI
-  clearChatUI();
-  
-  // Update sidebar
-  renderChatList();
-  
-  // Save to localStorage
-  saveChatsToLocalStorage();
-  
-  // Close drawer if open
-  closeDrawer('chats');
-}
 
-/**
- * Switch to a different chat
- */
-function switchChat(chatId) {
-  if (chatId === currentChatId) {
-    closeDrawer('chats');
-    return; // Already on this chat
-  }
-  
-  // Save current chat before switching
-  if (currentChatId) {
-    saveCurrentChat();
-  }
-  
-  // Switch to new chat
-  currentChatId = chatId;
-  
-  // Load chat to UI
-  loadChatToUI(chatId);
-  
-  // Update sidebar active state
-  renderChatList();
-  
-  // Save current chat ID
-  saveChatsToLocalStorage();
-  
-  // Close drawer
-  closeDrawer('chats');
-}
 
-/**
- * Save current chat state
- */
-function saveCurrentChat() {
-  const chat = chats.find(c => c.id === currentChatId);
-  if (chat) {
-    chat.messages = JSON.parse(JSON.stringify(messagePairs.map(pair => ({
-      prompt: pair.prompt
-    }))));
-    chat.chatHistory = JSON.parse(JSON.stringify(chatHistory));
-    chat.updatedAt = Date.now();
-  }
-}
 
-/**
- * Load chat to UI
- */
-function loadChatToUI(chatId) {
-  const chat = chats.find(c => c.id === chatId);
-  if (!chat) return;
-  
-  // Clear current UI
-  clearChatUI();
-  
-  // Restore chat history
-  chatHistory = JSON.parse(JSON.stringify(chat.chatHistory || []));
-  
-  // Re-render messages from chat history
-  renderMessagesFromHistory();
-}
 
-/**
- * Clear chat UI
- */
-function clearChatUI() {
-  const contentArea = document.getElementById('ai-content-area');
-  if (contentArea) {
-    contentArea.innerHTML = '';
-  }
-  messagePairs = [];
-  chatHistory = [];
-}
 
-/**
- * Render messages from chat history
- */
-function renderMessagesFromHistory() {
-  const contentArea = document.getElementById('ai-content-area');
-  if (!contentArea) return;
-  
-  // Process pairs from chatHistory (user + assistant)
-  for (let i = 0; i < chatHistory.length; i += 2) {
-    const userMsg = chatHistory[i];
-    const assistantMsg = chatHistory[i + 1];
-    
-    if (userMsg && userMsg.role === 'user') {
-      // Create user bubble
-      const userBubble = document.createElement('div');
-      userBubble.className = 'ai-msg user';
-      userBubble.style.padding = '16px 10px 10px 10px';
-      userBubble.style.background = '#eef2ff';
-      userBubble.style.borderRadius = '10px';
-      userBubble.style.margin = '8px 0 8px auto';
-      userBubble.style.width = 'fit-content';
-      userBubble.style.maxWidth = '70%';
-      userBubble.style.wordWrap = 'break-word';
-      userBubble.style.whiteSpace = 'pre-wrap';
-      userBubble.style.overflowWrap = 'break-word';
-      userBubble.innerText = userMsg.content;
-      contentArea.appendChild(userBubble);
-      
-      // Create assistant bubble if exists
-      let assistantBubble = null;
-      if (assistantMsg && assistantMsg.role === 'assistant') {
-        assistantBubble = document.createElement('div');
-        assistantBubble.className = 'ai-msg assistant';
-        assistantBubble.style.padding = '16px 10px 10px 20px';
-        assistantBubble.style.background = '#ffffff';
-        assistantBubble.style.border = '1px solid #e6edf3';
-        assistantBubble.style.borderRadius = '10px';
-        assistantBubble.style.margin = '8px 0';
-        
-        // Render response
-        const header = document.createElement('div');
-        header.style.display = 'flex';
-        header.style.alignItems = 'center';
-        header.style.gap = '10px';
-        header.innerHTML = '<strong>Assistant</strong>';
-        
-        const body = document.createElement('div');
-        body.style.marginTop = '8px';
-        
-        // Render markdown
-        const rawHtml = marked.parse(assistantMsg.content || '');
-        const sanitized = DOMPurify.sanitize(rawHtml);
-        body.innerHTML = sanitized;
-        
-        assistantBubble.appendChild(header);
-        assistantBubble.appendChild(body);
-        contentArea.appendChild(assistantBubble);
-      }
-      
-      // Track in messagePairs
-      const pairIndex = messagePairs.length;
-      messagePairs.push({
-        userBubble: userBubble,
-        assistantBubble: assistantBubble,
-        prompt: userMsg.content
-      });
-      
-      // Add edit button
-      addEditButton(userBubble, userMsg.content, pairIndex);
-    }
-  }
-  
-  // Scroll to bottom
-  const tray = document.getElementById('ai-response-tray');
-  if (tray) {
-    tray.scrollTop = tray.scrollHeight;
-  }
-}
 
-/**
- * Render chat list in sidebar
- */
-function renderChatList() {
-  const chatList = document.getElementById('chat-list');
-  if (!chatList) return;
-  
-  chatList.innerHTML = '';
-  
-  if (chats.length === 0) {
-    chatList.innerHTML = '<div class="chat-list-empty">No chats yet.<br>Click "New Chat" to start.</div>';
-    return;
-  }
-  
-  // Sort chats by updatedAt (newest first)
-  const sortedChats = [...chats].sort((a, b) => b.updatedAt - a.updatedAt);
-  
-  sortedChats.forEach(chat => {
-    const item = document.createElement('div');
-    item.className = 'chat-list-item' + (chat.id === currentChatId ? ' active' : '');
-    item.dataset.chatId = chat.id;
-    item.onclick = () => switchChat(chat.id);
 
-    const titleContainer = document.createElement('div');
-    titleContainer.className = 'chat-title-container';
 
-    const title = document.createElement('div');
-    title.className = 'chat-title';
-    title.textContent = chat.title || 'New Chat';
 
-    const editBtn = document.createElement('button');
-    editBtn.className = 'chat-edit-btn';
-    editBtn.setAttribute('aria-label', 'Rename chat');
-    editBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-pen-line-icon lucide-pen-line"><path d="M13 21h8"/><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/></svg>`;
-    // Prevent parent click (switchChat) when clicking edit
-    editBtn.onclick = (e) => {
-      e.stopPropagation();
-      startChatRename(chat.id);
-    };
 
-    titleContainer.appendChild(title);
-    titleContainer.appendChild(editBtn);
-
-    const date = document.createElement('div');
-    date.className = 'chat-date';
-    date.textContent = formatChatDate(chat.updatedAt);
-
-    item.appendChild(titleContainer);
-    item.appendChild(date);
-    chatList.appendChild(item);
-  });
-}
-
-/**
- * Format date for chat list
- */
-function formatChatDate(timestamp) {
-  const now = Date.now();
-  const diff = now - timestamp;
-  
-  const minutes = Math.floor(diff / 60000);
-  const hours = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
-  
-  if (minutes < 1) return 'Just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  if (days < 7) return `${days}d ago`;
-  
-  const date = new Date(timestamp);
-  return date.toLocaleDateString();
-}
-
-/**
- * Update chat title from first message
- */
-function updateChatTitle(chatId, title) {
-  const chat = chats.find(c => c.id === chatId);
-  if (chat && chat.title === 'New Chat') {
-    // Extract first 50 chars or first line
-    const cleanTitle = title.trim().substring(0, 50).split('\n')[0];
-    chat.title = cleanTitle || 'New Chat';
-    chat.updatedAt = Date.now();
-    renderChatList();
-    saveChatsToLocalStorage();
-  }
-}
-
-/**
- * Start inline rename for a chat
- */
-function startChatRename(chatId) {
-  const selector = `[data-chat-id="${chatId}"] .chat-title-container`;
-  const container = document.querySelector(selector);
-  if (!container) return;
-  // Avoid duplicate inputs
-  if (container.querySelector('input')) return;
-
-  const titleDiv = container.querySelector('.chat-title');
-  const current = titleDiv ? titleDiv.textContent : '';
-
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.value = current;
-  input.className = 'chat-title-input';
-
-  // Replace the title div with input
-  container.replaceChild(input, titleDiv);
-  input.focus();
-  input.select();
-
-  function finish(newVal) {
-    const value = (newVal || input.value || '').trim() || 'New Chat';
-    const chat = chats.find(c => c.id === chatId);
-    if (chat) {
-      chat.title = value;
-      chat.updatedAt = Date.now();
-      saveChatsToLocalStorage();
-      renderChatList();
-    }
-  }
-
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      finish(input.value);
-    } else if (e.key === 'Escape') {
-      renderChatList();
-    }
-  });
-
-  input.addEventListener('blur', () => finish(input.value));
-}
-
-/**
- * Save chats to localStorage
- */
-function saveChatsToLocalStorage() {
-  try {
-    const data = {
-      currentNotebookId,
-      notebooks: {
-        [currentNotebookId]: {
-          currentChatId,
-          chats: chats
-        }
-      }
-    };
-    
-    localStorage.setItem('notebook_chats', JSON.stringify(data));
-  } catch (e) {
-    console.error('Failed to save chats to localStorage:', e);
-  }
-}
-
-/**
- * Load chats from localStorage
- */
-function loadChatsFromLocalStorage() {
-  try {
-    const data = JSON.parse(localStorage.getItem('notebook_chats'));
-    if (data && data.notebooks && data.notebooks[currentNotebookId]) {
-      const notebook = data.notebooks[currentNotebookId];
-      chats = notebook.chats || [];
-      currentChatId = notebook.currentChatId;
-      
-      // Load the current chat
-      if (currentChatId && chats.find(c => c.id === currentChatId)) {
-        loadChatToUI(currentChatId);
-      } else if (chats.length > 0) {
-        // Load most recent chat
-        const sortedChats = [...chats].sort((a, b) => b.updatedAt - a.updatedAt);
-        currentChatId = sortedChats[0].id;
-        loadChatToUI(currentChatId);
-      }
-    }
-    
-    // If no chats exist, create first one
-    if (chats.length === 0) {
-      createNewChat();
-    }
-    
-    // Render chat list
-    renderChatList();
-  } catch (e) {
-    console.error('Failed to load chats from localStorage:', e);
-    // Create initial chat on error
-    createNewChat();
-  }
-}
 
 // ======================================================
 
@@ -1470,6 +1107,11 @@ async function runAIQuery() {
         // Update history
         chatHistory.push({ role: "user", content: prompt });
         chatHistory.push({ role: "assistant", content: answer });
+
+        // Update chat title from first AI response (only fires once — guard is in updateChatTitle)
+        if (currentChatId && typeof updateChatTitle === 'function') {
+          updateChatTitle(currentChatId, answer);
+        }
         
         let codeHtml = "";
         const originalAnswer = answer;
@@ -1576,6 +1218,22 @@ async function runAIQuery() {
 }
 
 
+function updateMaximizeButton(maxBtn, isDocked) {
+  if (!maxBtn) return;
+  
+  if (isDocked) {
+    // Show minimize icon
+    maxBtn.innerHTML = ICON_MINIMIZE;
+    maxBtn.setAttribute("aria-label", "Minimize");
+    maxBtn.setAttribute("title", "Minimize");
+  } else {
+    // Show maximize icon
+    maxBtn.innerHTML = ICON_MAXIMIZE;
+    maxBtn.setAttribute("aria-label", "Maximize");
+    maxBtn.setAttribute("title", "Maximize");
+  }
+}
+
 function initAIWidget() {
   const fab = document.getElementById("ai-fab");
   const mini = document.getElementById("ai-mini");
@@ -1620,7 +1278,10 @@ function initAIWidget() {
       if (content) {
         content.style.transition = 'none';
         content.classList.remove("ai-docked");
+        content.style.setProperty('--ai-panel-width', '');
         content.style.marginRight = '';
+        // Force a layout reflow to ensure immediate visual update when closing
+        content.offsetHeight; // Trigger reflow
       }
       // Re-enable transitions after a frame for future opens
       requestAnimationFrame(() => {
@@ -1630,7 +1291,8 @@ function initAIWidget() {
       return;
     }
 
-    // Opening
+    // Opening - re-read popupMode from localStorage to support dynamic mode changes
+    popupMode = localStorage.getItem('ai-popup-mode') || 'min';
     isOpen = true;
     mini.classList.add("open");
     mini.setAttribute("aria-hidden", "false");
@@ -1638,27 +1300,55 @@ function initAIWidget() {
     // Restore to maximized (docked) mode if it was previously
     if (popupMode === 'max') {
       mini.classList.add("docked");
+      // Update button to show minimize icon
+      updateMaximizeButton(maxBtn, true);
       const content = document.querySelector(".content");
       if (content) {
         const currentWidth = mini.style.getPropertyValue('--ai-panel-width') || '450px';
+        // Disable transitions for instant layout change
+        content.style.transition = 'none';
         content.classList.add("ai-docked");
+        // Set both inline style and CSS custom property for consistency
+        content.style.setProperty('--ai-panel-width', currentWidth);
         content.style.marginRight = currentWidth;
+        // Force a layout reflow to ensure immediate visual update
+        content.offsetHeight; // Trigger reflow
+        // Re-enable transitions after the change
+        requestAnimationFrame(() => {
+          content.style.transition = '';
+        });
       }
     } else {
       // ensure undocked when opening in min mode
       mini.classList.remove("docked");
+      // Update button to show maximize icon
+      updateMaximizeButton(maxBtn, false);
     }
 
     if (input) input.focus();
   };
 
-  fab.addEventListener("click", () => setOpen(!isOpen));
+  fab.addEventListener("click", () => {
+    // First FAB click on a new notebook with no chats: auto-create the first chat
+    if (chats.length === 0) {
+      const flagKey = `fab_first_click_${currentNotebookId}`;
+      if (!localStorage.getItem(flagKey)) {
+        localStorage.setItem(flagKey, '1');
+        createNewChat(); // opens popup and creates the first chat
+        return;
+      }
+    }
+    setOpen(!isOpen);
+  });
   if (closeBtn) closeBtn.addEventListener("click", () => setOpen(false));
 
   if (maxBtn) {
     maxBtn.addEventListener("click", () => {
       // Toggle docked state instead of expanded
       const isDocked = mini.classList.toggle("docked");
+      
+      // Update button icon and label
+      updateMaximizeButton(maxBtn, isDocked);
       
       // Save the new mode to state and localStorage
       popupMode = isDocked ? 'max' : 'min';
@@ -1667,15 +1357,30 @@ function initAIWidget() {
       // Adjust main content margin
       const content = document.querySelector(".content");
       if (content) {
+        // Disable transitions for instant layout change
+        content.style.transition = 'none';
+        
         if (isDocked) {
           // Use saved width or default
           const currentWidth = mini.style.getPropertyValue('--ai-panel-width') || '450px';
           content.classList.add("ai-docked");
+          // Set both inline style and CSS custom property for consistency
+          content.style.setProperty('--ai-panel-width', currentWidth);
           content.style.marginRight = currentWidth;
         } else {
           content.classList.remove("ai-docked");
+          content.style.setProperty('--ai-panel-width', '');
           content.style.marginRight = '';
         }
+        
+        // Force a layout reflow to ensure immediate visual update
+        // This is necessary because we disabled transitions
+        content.offsetHeight; // Trigger reflow
+        
+        // Re-enable transitions after the change
+        requestAnimationFrame(() => {
+          content.style.transition = '';
+        });
       }
       
       // Keep focus on input
@@ -1712,6 +1417,8 @@ function initAIWidget() {
     // Update content margin to match
     const content = document.querySelector(".content");
     if (content && mini.classList.contains("docked")) {
+      // Set both inline style and CSS custom property for consistency
+      content.style.setProperty("--ai-panel-width", newWidth + "px");
       content.style.marginRight = newWidth + "px";
     }
   });
@@ -1837,6 +1544,39 @@ function initAIWidget() {
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") setOpen(false);
   });
+}
+
+// ==========================================
+// AI POPUP MODE HELPERS
+// ==========================================
+
+/**
+ * Opens AI popup in minimized mode
+ */
+function openAIPopupMinimized() {
+  localStorage.setItem('ai-popup-mode', 'min');
+  const fab = document.getElementById('ai-fab');
+  if (fab) fab.click();
+}
+
+/**
+ * Opens AI popup in maximized mode
+ */
+function openAIPopupMaximized() {
+  localStorage.setItem('ai-popup-mode', 'max');
+  const fab = document.getElementById('ai-fab');
+  if (fab) fab.click();
+}
+
+/**
+ * Opens AI popup in a specific mode ('min' or 'max')
+ */
+function openAIPopupWithMode(mode) {
+  if (mode === 'min' || mode === 'max') {
+    localStorage.setItem('ai-popup-mode', mode);
+  }
+  const fab = document.getElementById('ai-fab');
+  if (fab) fab.click();
 }
 
 // Add these helper functions to script.js
@@ -2095,11 +1835,27 @@ async function saveNotebook() {
         }
     });
 
+    // Save current chat state before persisting
+    if (currentChatId) saveCurrentChat();
+
+    // Set notebookId based on notebook name
+    currentNotebookId = 'notebook_' + name;
+
     const resp = await fetch('/api/notebooks/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, cells, chat_history: chatHistory })
+        body: JSON.stringify({
+            name,
+            cells,
+            chat_data: {
+                currentChatId,
+                chats: chats
+            }
+        })
     });
+
+    // Also persist to localStorage under this notebook's ID
+    saveChatsToLocalStorage();
 
     const result = await resp.json();
     if (result.error) await customAlert(result.error);
@@ -2111,15 +1867,23 @@ async function saveNotebook() {
 async function newNotebook() {
     if (!await customConfirm("Start a new notebook? Unsaved changes will be lost.")) return;
 
+    // Save current chat before clearing
+    if (currentChatId) saveCurrentChat();
+
     const view = document.getElementById('workspace-view');
     view.innerHTML = '';
     cellCount = 0;
-
     addCodeCell();
-    
-    // Reset chat history
+
+    // Assign fresh notebook identity and reset ALL chat state
+    currentNotebookId = 'notebook_' + Date.now();
+    chats = [];
+    currentChatId = null;
     chatHistory = [];
+    messagePairs = [];
     document.getElementById("ai-content-area").innerHTML = '';
+    renderChatList();
+    saveChatsToLocalStorage();
 }
 
 // Update loadSavedNotebooks to include cell count and upload button
@@ -2149,21 +1913,45 @@ async function loadSavedNotebooks() {
 
 async function openNotebook(name) {
     const resp = await fetch(`/api/notebooks/${name}`);
-    const cells = await resp.json();
+    const data = await resp.json();
 
-    if (cells.error) {
+    if (data.error) {
         await customAlert("Could not load notebook.");
         return;
     }
-    
-    // Handle new format vs legacy format
-    let notebookCells = [];
-    if (Array.isArray(cells)) {
-        notebookCells = cells;
+
+    // Set notebook identity based on notebook name
+    currentNotebookId = 'notebook_' + name;
+
+    // Extract cells (backward compatible with legacy array format)
+    let notebookCells = Array.isArray(data) ? data : (data.cells || []);
+
+    // Restore multi-chat data
+    if (data.chat_data && data.chat_data.chats && data.chat_data.chats.length > 0) {
+        // New format: full multi-chat data
+        chats = data.chat_data.chats;
+        currentChatId = data.chat_data.currentChatId;
         chatHistory = [];
+        messagePairs = [];
+    } else if (data.chat_history && data.chat_history.length > 0) {
+        // Legacy format: migrate flat chat_history into a single chat
+        chats = [{
+            id: 'chat_' + Date.now(),
+            title: 'Restored Chat',
+            messages: [],
+            chatHistory: data.chat_history,
+            createdAt: Date.now(),
+            updatedAt: Date.now()
+        }];
+        currentChatId = chats[0].id;
+        chatHistory = data.chat_history;
+        messagePairs = [];
     } else {
-        notebookCells = cells.cells || [];
-        chatHistory = cells.chat_history || [];
+        // No chat data at all
+        chats = [];
+        currentChatId = null;
+        chatHistory = [];
+        messagePairs = [];
     }
 
     // 1. Switch to workspace view
@@ -2205,9 +1993,18 @@ async function openNotebook(name) {
             if (editor) editor.innerHTML = cellData.source || '';
         }
     });
-    // 4. Render Chat History
-    renderChatHistory(chatHistory);
 
+    // 4. Clear AI content area and render chat list + last active chat
+    document.getElementById('ai-content-area').innerHTML = '';
+    renderChatList();
+    if (currentChatId && chats.find(c => c.id === currentChatId)) {
+        loadChatToUI(currentChatId);
+    } else if (chats.length > 0) {
+        const sorted = [...chats].sort((a, b) => b.updatedAt - a.updatedAt);
+        currentChatId = sorted[0].id;
+        loadChatToUI(currentChatId);
+    }
+    saveChatsToLocalStorage();
 }
 
 function renderChatHistory(history) {
