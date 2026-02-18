@@ -43,6 +43,7 @@ function showCustomDialog(title, message, options = {}) {
     cancelBtn.style.display = 'inline-block';
     confirmBtn.classList.remove('danger');
     confirmBtn.textContent = 'Confirm';
+    cancelBtn.dataset.context = 'primary'; // default: blue hover border
 
     // Configure based on type
     const type = options.type || 'alert';
@@ -58,8 +59,10 @@ function showCustomDialog(title, message, options = {}) {
         confirmBtn.textContent = options.confirmText || (options.isDangerous ? 'Delete' : 'Confirm');
         if (options.isDangerous) {
             confirmBtn.classList.add('danger');
+            cancelBtn.dataset.context = 'danger'; // red hover border
         } else {
             confirmBtn.classList.remove('danger');
+            cancelBtn.dataset.context = 'primary'; // blue hover border
         }
         setTimeout(() => confirmBtn.focus(), 60);
     } else if (type === 'prompt') {
