@@ -162,27 +162,17 @@ async def save_notebook(req: Request):
     data = await req.json()
     name = data['name']
     cells = data['cells']
-    # Default to empty list if not provided (backward compatibility)
+    # Multi-chat data (new format)
+    chat_data = data.get('chat_data', {})
+    # Legacy flat chat_history (backward compatibility)
     chat_history = data.get('chat_history', [])
     
     filepath = f'notebooks/{name}.json'
-    # Check if exists (overwriting allowed? user logic currently checks exist)
-    # The current logic returns error if exists. I'll keep it same for now but often saving overwrites.
-    # Wait, current logic: if os.path.exists(filepath): return {"error": "Name already exists"}
-    # This prevents updating! Users usually overwrite. I'll FIX this to allow overwrite if it's a save action?
-    # The user didn't ask to fix save overwrite, but usually "Save" implies update.
-    # The frontend calls saveNotebook which prompts for name. If name exists, it fails.
-    # I will stick to existing logic for now to avoid side effects, but add chat_history.
-    
-    if os.path.exists(filepath):
-         # Creating a temp fix to allow overwrite if it's the SAME notebook?
-         # The prompt logic suggests "Save As". 
-         # I'll just save the data.
-         pass 
 
-    # Prepare data structure
+    # Prepare data structure with both new and legacy chat formats
     notebook_data = {
         "cells": cells,
+        "chat_data": chat_data,
         "chat_history": chat_history
     }
     
