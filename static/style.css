@@ -1,4 +1,4 @@
-/* Loading Screen */
+﻿/* Loading Screen */
 .loading-screen {
     position: fixed;
     top: 0;
@@ -211,6 +211,55 @@ body {
 
 .navbar-title {
     letter-spacing: 0.5px;
+}
+
+
+/* ---- Centered Notebook Title ---- */
+.navbar-content {
+    position: relative;
+}
+
+.navbar-notebook-title {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: 240px;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.navbar-nb-scroll-wrap {
+    display: flex;
+    white-space: nowrap;
+}
+
+.navbar-nb-text {
+    font-family: 'Inter', sans-serif;
+    font-size: 0.95rem;
+    font-weight: 400;
+    letter-spacing: 0.03em;
+    color: var(--text-primary);
+    white-space: nowrap;
+    display: inline-block;
+}
+
+/* Continuous ticker: two copies side-by-side, animate the pair -50% */
+@keyframes nb-marquee {
+    from {
+        transform: translateX(0);
+    }
+
+    to {
+        transform: translateX(-50%);
+    }
+}
+
+.navbar-nb-scroll-wrap.marquee-active {
+    animation: nb-marquee 20s linear infinite;
+}
+
+.navbar-notebook-title:hover .navbar-nb-scroll-wrap.marquee-active {
+    animation-play-state: paused;
 }
 
 .navbar-buttons {
@@ -432,7 +481,7 @@ body {
     border-radius: 8px;
     font-size: 0.85rem;
     color: #cbd5e1;
-    /* 👈 VISIBLE TEXT */
+    /* ðŸ‘ˆ VISIBLE TEXT */
     cursor: pointer;
     display: flex;
     justify-content: space-between;
@@ -515,7 +564,7 @@ body {
     display: flex;
     /* This enables the layout engine */
     flex-direction: row;
-    /* 🔑 STRICTLY forces buttons to be side-by-side */
+    /* ðŸ”‘ STRICTLY forces buttons to be side-by-side */
     justify-content: center;
     /* Centers them in the middle of the screen */
     align-items: center;
@@ -647,7 +696,7 @@ body {
     display: flex;
     flex-direction: column;
     position: relative;
-    /* 🔑 NEW: This allows the box to shrink, forcing scrollbars instead of overflow */
+    /* ðŸ”‘ NEW: This allows the box to shrink, forcing scrollbars instead of overflow */
     min-width: 0;
 }
 
@@ -730,7 +779,7 @@ body {
     padding: 1px;
     border-top: 1.3px solid #d1d5db;
     border-radius: 0;
-    /* 🔑 NEW: Handle overflow properly */
+    /* ðŸ”‘ NEW: Handle overflow properly */
     width: 100%;
     overflow-x: auto;
     /* Scrollbar for wide tables */
@@ -778,7 +827,7 @@ body {
     justify-content: center;
     cursor: pointer;
 
-    /* 🔑 KEY CHANGES BELOW */
+    /* ðŸ”‘ KEY CHANGES BELOW */
     overflow: visible !important;
     /* Stops the "cutting" effect */
     position: relative;
@@ -851,7 +900,7 @@ body {
     max-width: 820px;
     display: flex;
     align-items: center;
-    /* ✅ hard center */
+    /* âœ… hard center */
     gap: 10px;
     padding: 10px 14px;
     border-radius: 26px;
@@ -875,9 +924,9 @@ body {
 
     font-size: 0.95rem;
     line-height: 1.2;
-    /* 🔑 FIX */
+    /* ðŸ”‘ FIX */
     padding: 4px 0;
-    /* 🔑 FIX */
+    /* ðŸ”‘ FIX */
 
     background: transparent;
     overflow-y: hidden;
@@ -995,6 +1044,52 @@ button[id$="-btn"] {
     top: auto;
     bottom: 2px;
     right: 2px;
+}
+
+/* Rename Button (Pen) */
+.history-card .rename-db-btn {
+    position: absolute;
+    top: auto;
+    bottom: 2px;
+    right: 32px;
+    /* Left of delete button */
+    opacity: 0;
+    background: transparent;
+    border: none;
+    color: #cbd5e1;
+    /* Subtle default color */
+    cursor: pointer;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    transition: opacity 0.2s, color 0.15s;
+    z-index: 2;
+}
+
+.history-card:hover .rename-db-btn {
+    opacity: 1;
+}
+
+.history-card .rename-db-btn:hover {
+    color: #3b82f6;
+    /* Blue on hover */
+}
+
+/* Inline Rename Input */
+.rename-input {
+    font-size: 1rem;
+    /* Match existing strong tag */
+    font-weight: 600;
+    color: #1e293b;
+    border: 1px solid #3b82f6;
+    border-radius: 4px;
+    padding: 0 4px;
+    width: 180px;
+    outline: none;
+    background: #fff;
+    font-family: inherit;
+    margin: -1px;
+    /* Align with text position */
 }
 
 /* ==============================
@@ -1756,7 +1851,7 @@ button[id$="-btn"] {
     overflow-x: hidden;
     min-height: 0;
     box-sizing: border-box;
-    /* ← ADD THIS - Critical for containing padding */
+    /* â† ADD THIS - Critical for containing padding */
     border-radius: 0 0 12px 12px;
 }
 
@@ -1777,7 +1872,7 @@ button[id$="-btn"] {
     /* Reduced right padding */
     margin: 20px 0 !important;
     box-sizing: border-box;
-    /* ← ADD THIS */
+    /* â† ADD THIS */
 }
 
 .ai-msg.user {
@@ -1785,7 +1880,7 @@ button[id$="-btn"] {
     /* Reduced right padding */
     margin: 20px 0 20px auto !important;
     box-sizing: border-box;
-    /* ← ADD THIS */
+    /* â† ADD THIS */
 }
 
 
@@ -2222,12 +2317,12 @@ button[id$="-btn"] {
     width: var(--ai-panel-width, 500px);
     height: calc(100vh - 56px);
     max-height: none;
-    border-radius: 0;
+    border-radius: 12px;
     background: #ffffff;
     transform: translate(0, 0);
     opacity: 1;
     pointer-events: auto;
-    box-shadow: -8px 0 24px rgba(2, 6, 23, 0.12);
+    box-shadow: -8px 0 12px rgba(2, 6, 23, 0.06);
 
     /* Apply breathing animation - slower for docked mode */
     animation: border-breathe 4s ease-in-out infinite;
@@ -2398,6 +2493,15 @@ button[id$="-btn"] {
     background: #eff6ff;
     border-color: #3b82f6;
     box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+}
+
+/* Shared selected state for saved-notebook and history drawer cards */
+.drawer-item--selected {
+    background: #eff6ff !important;
+    border-color: #3b82f6 !important;
+    border-width: 1.5px !important;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.10) !important;
+    transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 
 /* Delete button for chat items */
@@ -2611,7 +2715,7 @@ button[id$="-btn"] {
 }
 
 
-/* Default hover — primary context (Save / New / OK): blue border */
+/* Default hover â€” primary context (Save / New / OK): blue border */
 .custom-dialog-btn-cancel:hover,
 .custom-dialog-btn-cancel[data-context="primary"]:hover {
     background: #fbfdff;
@@ -2671,6 +2775,7 @@ button[id$="-btn"] {
 }
 
 /* ======================================================
+/* ======================================================
    KEYBOARD SHORTCUTS STYLING
    ====================================================== */
 
@@ -2681,7 +2786,6 @@ button[id$="-btn"] {
     justify-content: center;
     gap: 6px;
     transition: all 0.2s ease;
-    /* Inherits from .navbar-buttons button by default */
 }
 
 .keyboard-shortcuts-btn:hover {
@@ -2708,157 +2812,189 @@ button[id$="-btn"] {
     left: 0;
     width: 100%;
     height: 100%;
-    background-color: rgba(0, 0, 0, 0.5);
+    background-color: rgba(0, 0, 0, 0.35);
     display: flex;
     justify-content: center;
     align-items: center;
     cursor: pointer;
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
 }
 
 /* Modal content */
 .keyboard-shortcuts-content {
-    background: var(--bg-surface);
-    border-radius: 12px;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-    max-width: 600px;
-    width: 90%;
-    max-height: 80vh;
+    background: #ffffff;
+    border-radius: 14px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.18);
+    width: min(820px, 92vw);
+    max-height: 82vh;
     display: flex;
     flex-direction: column;
-    animation: slideUp 0.3s ease-out;
+    cursor: default;
+    animation: ks-slide-up 0.25s cubic-bezier(0.2, 0.9, 0.2, 1);
 }
 
+@keyframes ks-slide-up {
+    from {
+        opacity: 0;
+        transform: translateY(12px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Header */
 .shortcuts-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 24px 24px 16px 24px;
-    border-bottom: 1px solid var(--border);
+    padding: 22px 28px 18px 28px;
+    border-bottom: 1px solid #e5e7eb;
+    flex-shrink: 0;
 }
 
-.shortcuts-header h2 {
+.shortcuts-title {
     margin: 0;
-    font-size: 20px;
-    color: var(--text-primary);
-    display: flex;
-    align-items: center;
-    gap: 8px;
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: #0f172a;
+    letter-spacing: 0.01em;
 }
 
 .shortcuts-close {
     background: transparent;
     border: none;
-    color: var(--text-secondary);
+    color: #94a3b8;
     cursor: pointer;
-    padding: 8px;
+    padding: 6px;
     border-radius: 6px;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.2s ease;
+    transition: background 0.15s, color 0.15s;
 }
 
 .shortcuts-close:hover {
-    background-color: var(--bg-muted);
-    color: var(--text-primary);
+    background: #f1f5f9;
+    color: #0f172a;
 }
 
-.shortcuts-close svg {
-    width: 24px;
-    height: 24px;
-    stroke: currentColor;
-}
-
-/* Shortcuts grid */
-.shortcuts-grid {
+/* Two-column layout */
+.ks-two-col {
     flex: 1;
-    overflow-y: auto;
-    padding: 16px 24px;
     display: grid;
-    grid-template-columns: repeat(1, 1fr);
-    gap: 12px;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 1px;
+    overflow-y: auto;
+    padding: 8px 0;
+    background: #e5e7eb;
 }
 
-@media (min-width: 600px) {
-    .shortcuts-grid {
-        grid-template-columns: repeat(2, 1fr);
-    }
-}
-
-.shortcut-item {
+.ks-col {
+    background: #ffffff;
+    padding: 12px 0;
     display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    padding: 12px;
-    background-color: var(--bg-muted);
-    border-radius: 8px;
-    transition: all 0.2s ease;
+    flex-direction: column;
 }
 
-.shortcut-item:hover {
-    background-color: var(--accent-soft);
-    transform: translateX(2px);
+/* Section group */
+.ks-section {
+    margin-bottom: 4px;
 }
 
-.shortcut-key {
-    font-family: 'Fira Code', monospace;
-    font-size: 12px;
+/* Section title */
+.ks-section-title {
+    font-size: 0.68rem;
     font-weight: 600;
-    background-color: var(--accent);
-    color: white;
-    padding: 4px 8px;
-    border-radius: 4px;
+    letter-spacing: 0.1em;
+    color: #94a3b8;
+    text-transform: uppercase;
+    padding: 14px 24px 8px 24px;
+}
+
+/* Each shortcut row */
+.ks-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 9px 24px;
+    border-top: 1px solid #f1f5f9;
+    gap: 16px;
+    transition: background 0.12s;
+}
+
+.ks-row:hover {
+    background: #f8fafc;
+}
+
+.ks-row--first {
+    border-top-color: #e9ecef;
+}
+
+/* Action description (left side) */
+.ks-description {
+    font-size: 0.875rem;
+    color: #475569;
+    flex: 1;
+    min-width: 0;
+}
+
+/* Shortcut key text (right side) */
+.ks-keys {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #1e293b;
     white-space: nowrap;
     flex-shrink: 0;
+    font-family: 'Fira Code', ui-monospace, monospace;
+    letter-spacing: 0.02em;
 }
 
-.shortcut-description {
-    font-size: 14px;
-    color: var(--text-primary);
-    flex: 1;
+/* Scrollbar for the two-col area */
+.ks-two-col::-webkit-scrollbar {
+    width: 5px;
 }
 
-/* Shortcuts footer */
-.shortcuts-footer {
-    padding: 16px 24px;
-    border-top: 1px solid var(--border);
-    background-color: var(--bg-muted);
-    text-align: center;
-    font-size: 13px;
-    color: var(--text-secondary);
-    border-radius: 0 0 12px 12px;
-}
-
-.shortcuts-footer p {
-    margin: 0;
-}
-
-.shortcuts-footer kbd {
-    background-color: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 2px 6px;
-    font-family: 'Fira Code', monospace;
-    font-size: 12px;
-    font-weight: 500;
-    display: inline-block;
-    margin: 0 2px;
-}
-
-/* Scrollbar styling for shortcuts grid */
-.shortcuts-grid::-webkit-scrollbar {
-    width: 6px;
-}
-
-.shortcuts-grid::-webkit-scrollbar-track {
+.ks-two-col::-webkit-scrollbar-track {
     background: transparent;
 }
 
-.shortcuts-grid::-webkit-scrollbar-thumb {
-    background: var(--border);
-    border-radius: 3px;
+.ks-two-col::-webkit-scrollbar-thumb {
+    background: #e2e8f0;
+    border-radius: 4px;
 }
 
-.shortcuts-grid::-webkit-scrollbar-thumb:hover {
-    background: var(--text-secondary);
+.ks-two-col::-webkit-scrollbar-thumb:hover {
+    background: #cbd5e1;
+}
+
+/* Footer */
+.shortcuts-footer {
+    padding: 14px 28px;
+    border-top: 1px solid #e5e7eb;
+    text-align: center;
+    font-size: 0.8rem;
+    color: #94a3b8;
+    border-radius: 0 0 14px 14px;
+    flex-shrink: 0;
+}
+
+.shortcuts-footer strong {
+    color: #64748b;
+    font-weight: 600;
+}
+
+/* Responsive: stack to single column on small screens */
+@media (max-width: 560px) {
+    .ks-two-col {
+        grid-template-columns: 1fr;
+        background: #ffffff;
+    }
+
+    .ks-col {
+        padding: 4px 0;
+    }
 }
