@@ -14,6 +14,11 @@ class QueryRequest(BaseModel):
     # NEW: Chat history for context
     chat_history: List[Any] = Field(default_factory=list, description="Previous chat messages")
 
+    # --- NEW FIELDS FOR MODIFICATION ---
+    is_modification: bool = False
+    original_code: Optional[str] = None
+    active_cell_id: Optional[str] = None
+
 
 # This model defines the structure of the data going TO the Frontend
 class QueryResponse(BaseModel):

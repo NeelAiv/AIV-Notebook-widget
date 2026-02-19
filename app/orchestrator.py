@@ -42,50 +42,59 @@ class IncidentOrchestrator:
 
     def _identify_intent(self, user_query: str, notebook_cells: List[str], client_vars: List[str], chat_history: List[Dict[str, str]]) -> str:
         """
-        Uses the LLM to identify the user's intent.
-        Returns one of: SQL_QUERY, VECTOR_SEARCH, EXPLAIN_CODE, GENERATE_CODE, FILE_QA, GENERAL_QUESTION
+        FAST ROUTING: Uses keywords/regex first, falls back to LLM only if necessary.
         """
-        # ... (keyword checks remain same) ...
-        query_lower = user_query.lower()
-        explain_keywords = ["explain", "what does", "what is", "how does", "describe", "tell me about", "clarify", "understand"]
-        for keyword in explain_keywords:
-            if keyword in query_lower and "file" not in query_lower and "document" not in query_lower:
-                 return "EXPLAIN_CODE"
-        
-        if self.active_file_context:
-             if any(k in query_lower for k in ["file", "document", "uploaded", "pdf", "docx", "text", "summary", "key points"]):
-                 return "FILE_QA"
+        q = user_query.lower().strip()
+        print(f"🕵️ ORCHESTRATOR: Analyzing intent for: '{q}'") # <--- DEBUG PRINT
 
+        # --- 1. FILE UPLOAD QA (Instant) ---
+        if self.active_file_context and any(x in q for x in ["file", "document", "pdf", "summary", "upload", "spreadsheet"]):
+            print("⚡ FAST MATCH: Intent identified as FILE_QA via keywords") # <--- DEBUG PRINT
+            return "FILE_QA"
+
+        # --- 2. EXPLAIN CODE (Instant) ---
+        # Matches: "explain cell 1", "define code", "what does cell 2 do"
+        explain_patterns = [
+            r"explain", r"describe", r"define", r"meaning", 
+            r"what does .* code", r"what does .* cell", r"how does .* work"
+        ]
+        if any(re.search(p, q) for p in explain_patterns):
+            print("⚡ FAST MATCH: Intent identified as EXPLAIN_CODE via regex") # <--- DEBUG PRINT
+            return "EXPLAIN_CODE"
+
+        # --- 3. SQL (Instant) ---
+        # Look for strong SQL keywords
+        if any(x in q for x in ["select ", "from ", "count(", "database", "sql", "table", "query data"]):
+            print("⚡ FAST MATCH: Intent identified as SQL_QUERY via keywords") # <--- DEBUG PRINT
+            return "SQL_QUERY"
+
+        # --- 4. GENERATE CODE (Instant) ---
+        # Triggers on plotting, logic, or explicit code requests
+        code_keywords = ["plot", "graph", "chart", "code", "python", "dataframe", "pandas", "function", "generate", "write", "create a","make it", "change", "update", "add to", "modify", "fix"]
+        if any(x in q for x in code_keywords):
+            print("⚡ FAST MATCH: Intent identified as GENERATE_CODE via keywords") # <--- DEBUG PRINT
+            return "GENERATE_CODE"
+
+        # --- 5. VECTOR SEARCH (Instant) ---
+        if "search" in q or "find similar" in q:
+            print("⚡ FAST MATCH: Intent identified as VECTOR_SEARCH via keywords") # <--- DEBUG PRINT
+            return "VECTOR_SEARCH"
+
+        # --- 6. SLOW FALLBACK (LLM) ---
+        print("🐢 NO MATCH: Falling back to LLM for intent classification...") # <--- DEBUG PRINT
+        
         system_msg = (
-            "You are an AI assistant tasked with identifying user intent. "
-            "IMPORTANT DISTINCTIONS:\n"
-            "- EXPLAIN_CODE: User wants you to explain existing notebook code.\n"
-            "- GENERATE_CODE: User wants you to write/create NEW code.\n"
-            "- SQL_QUERY: User asks about data with database/table/row language\n"
-            "- VECTOR_SEARCH: User asks to search/find similar content in the database\n"
-            "- FILE_QA: User asks questions about the uploaded file/document.\n"
-            "- GENERAL_QUESTION: Anything else (general knowledge questions, OR follow-up questions about previous chat)\n"
-            "Output ONLY one category name. No explanations."
+            "Identify user intent: SQL_QUERY, VECTOR_SEARCH, EXPLAIN_CODE, GENERATE_CODE, FILE_QA, GENERAL_QUESTION. Output ONLY the category."
         )
         
         notebook_context_str = "\n".join([f"Cell {i+1}:\n```python\n{cell}\n```" for i, cell in enumerate(notebook_cells)])
         history_str = self._format_history(chat_history)
         
         user_msg = f"""User Query: {user_query}
-
-Previous Chat History:
-{history_str}
-
-Notebook Code Content:
-{notebook_context_str if notebook_cells else "No notebook cells provided."}
-
-Active Variables: {json.dumps(client_vars) if client_vars else "No active variables."}
-
-Has Uploaded File Context: {"YES" if self.active_file_context else "NO"}
-
-Identify the PRIMARY intent (choose only ONE):
-SQL_QUERY, VECTOR_SEARCH, EXPLAIN_CODE, GENERATE_CODE, FILE_QA, GENERAL_QUESTION
-"""
+Previous Chat History: {history_str}
+Notebook Code: {notebook_context_str if notebook_cells else "None"}
+Identify the PRIMARY intent (choose only ONE): SQL_QUERY, VECTOR_SEARCH, EXPLAIN_CODE, GENERATE_CODE, FILE_QA, GENERAL_QUESTION"""
+        
         intent_response = self.llm.generate(system_msg, user_msg)
         intent = intent_response.strip().upper().replace(" ", "_")
         
@@ -213,69 +222,97 @@ SQL_QUERY, VECTOR_SEARCH, EXPLAIN_CODE, GENERATE_CODE, FILE_QA, GENERAL_QUESTION
         return self._get_llm_response(system_msg, user_msg, tool_used)
 
 
-    def _handle_generate_code(self, user_query: str, notebook_cells: List[str], client_vars: List[str]) -> Dict[str, Any]:
+    def _handle_generate_code(self, user_query: str, notebook_cells: List[str], client_vars: List[str], is_modification: bool = False, original_code: str = None, active_cell_id: str = None) -> Dict[str, Any]:
         """Handles requests to generate new Python code."""
+        
+        # --- REFACTORING LOGIC ---
+        if is_modification and original_code:
+            tool_used = "Modify_Code"
+            system_msg = (
+                "You are a code refactoring assistant. A user will provide a block of Python code and a request to modify it. "
+                "Your task is to return the *entire*, complete, modified code block. "
+                "DO NOT add explanations, comments, or markdown wrappers like ```python. ONLY return the raw, updated code."
+            )
+            user_msg = f"""Original Code:
+{original_code}
+
+Modification Request: "{user_query}"
+
+Return the full modified code block now:"""
+            
+            modified_code_raw = self.llm.generate(system_msg, user_msg)
+            modified_code = modified_code_raw.replace("```python", "").replace("```", "").strip()
+
+            return {
+                "answer": f"I've updated the code in {active_cell_id.replace('-', ' ') if active_cell_id else 'the active cell'} to apply your changes.",
+                "tool_used": tool_used,
+                "action": "UPDATE_CELL",
+                "cell_id": active_cell_id,
+                "modified_code": modified_code,
+                "trace": "LLM modified existing code block.",
+                "raw_data": []
+            }
+        
+        # --- ORIGINAL GENERATION LOGIC ---
         tool_used = "Generate_Code"
         
-        # Format notebook cells for LLM context with clear numbering
-        notebook_context_str = "\n".join([f"Cell {i+1}:\n```python\n{cell}\n```" for i, cell in enumerate(notebook_cells)])
+        # 1. Get the very last cell content specifically (The one being modified)
+        last_cell_content = notebook_cells[-1] if notebook_cells else ""
         
-        # Extract cell reference from user query if any (e.g., "cell 3", "third cell", "last cell", etc.)
-        cell_reference = ""
-        cell_ref_patterns = [
-            r'\bcell\s+(\d+)\b',  # "cell 3"
-            r'(first|second|third|fourth|fifth|last)\s+cell',  # "first cell", "last cell"
-            r'cell\s+(#|number)?\s*(\d+)',  # "cell # 3"
-        ]
+        # 2. Context Pruning
+        recent_cells = notebook_cells[-3:] if len(notebook_cells) > 3 else notebook_cells
+        offset = len(notebook_cells) - len(recent_cells)
+        notebook_context_str = "\n".join([f"Cell {i+1+offset}:\n```python\n{cell}\n```" for i, cell in enumerate(recent_cells)])
+
+        # 3. Smart Hints
+        hints = []
+        if "3d" in user_query.lower():
+            hints.append("For 3D plots, use: `from mpl_toolkits.mplot3d import Axes3D`, `fig = plt.figure()`, `ax = fig.add_subplot(111, projection='3d')`.")
         
-        for pattern in cell_ref_patterns:
-            match = re.search(pattern, user_query, re.IGNORECASE)
-            if match:
-                cell_reference = f"\n⚠️ User is asking about/referencing a specific cell. Pay close attention to the relevant cell content above."
-                break
-        
+        hint_str = "\n".join(hints)
+        specific_instructions = f"SPECIFIC INSTRUCTIONS:\n{hint_str}" if hints else ""
+
         system_msg = (
-            "You are an expert Python programmer and a helpful AI assistant for a data science notebook. "
-            "Your primary task is to generate valid, executable Python code based on the user's request. "
-            "Consider the existing `Notebook Code Content` and `Active Variables in Browser Memory` "
-            "to ensure the generated code is relevant, functional, and uses available context appropriately. "
-            "IMPORTANT: When the user references a specific cell (e.g., 'cell 3', 'the last cell'), "
-            "focus on that cell's content and build your code to work with or extend it. "
-            "ONLY output the executable Python code block. Do not include any explanations, conversational text, "
-            "or surrounding markdown like '```python' or '```'. Just the raw code. "
-            "If the request is unclear, too broad, or cannot be fulfilled with a code snippet, "
-            "respond with: 'I cannot generate code for this request, please be more specific or provide necessary context.'"
+            "You are an expert Python programmer.\n"
+            "RULES:\n"
+            "1. Output the COMPLETE code block. Do not just output the changed lines. Output the full runnable cell.\n" # <--- IMPORTANT
+            "2. NO Markdown wrappers (no ```python). Just raw code.\n"
+            "3. NO explanations. Just code.\n"
+            "4. VISUALIZATION SPECIFICS: Check if the user asks for 3D plots and use correct libraries.\n"
         )
-        user_msg = f"""User Request to generate code: {user_query}{cell_reference}
+        
+        user_msg = f"""User Request: {user_query}
 
-Notebook Cells (numbered for reference):
-{notebook_context_str if notebook_cells else "No existing notebook cells."}
+Current Code in Active Cell (Modify THIS code if asking for changes):
+```python
+{last_cell_content}
+```
 
-Active Variables in Browser Memory (available from previous cell executions): {json.dumps(client_vars) if client_vars else "No active variables."}
+Full Notebook Context:
+{notebook_context_str}
 
-Generate the Python code to fulfill the user's request:
+{specific_instructions}
+
+Active Variables: {json.dumps(client_vars) if client_vars else "[]"}
+
+Generate the COMPLETE updated Python code:
 """
         generated_code_raw = self.llm.generate(system_msg, user_msg)
         
-        # The LLM is instructed to ONLY output code, so we can try to directly use it.
-        # However, it's robust to still check for common markdown wrappers.
+        # Clean up code blocks if LLM ignores instruction
         code_match = re.search(r'```python\n(.*?)```', generated_code_raw, re.DOTALL)
         if code_match:
             generated_code = code_match.group(1).strip()
         else:
-            generated_code = generated_code_raw.strip() # Assume it's just code if no markdown block found
+            generated_code = generated_code_raw.replace("```", "").strip()
 
-        if generated_code.lower().startswith("i cannot generate code for this request"):
-             answer = generated_code
-             trace = "LLM failed to generate specific code."
-        else:
-            answer = f"Here is the generated code. You can copy and paste this into a new cell:\n```python\n{generated_code}\n```"
-            trace = "LLM generated Python code."
-
+        # We return the code wrapped so frontend regex can find it
+        answer = f"Here is the updated code:\n```python\n{generated_code}\n```"
+        
         return {
             "answer": answer,
             "tool_used": tool_used,
-            "trace": trace,
+            "trace": "LLM generated Python code.",
             "raw_data": []
         }
 
@@ -341,13 +378,17 @@ Active Variables: {json.dumps(client_vars) if client_vars else "No active variab
         return self._get_llm_response(system_msg, user_msg, tool_used)
 
 
-    def route_and_execute(self, user_query: str, notebook_cells: List[str], client_vars: List[str], chat_history: List[Dict[str, str]]=[]) -> Dict[str, Any]:
+    def route_and_execute(self, user_query: str, notebook_cells: List[str], client_vars: List[str], chat_history: List[Dict[str, str]]=[], *, is_modification: bool = False, original_code: str = None, active_cell_id: str = None) -> Dict[str, Any]:
         """
         Routes the user query to the appropriate tool based on identified intent.
         """
         
-        # Identify the user's intent using the LLM
-        intent = self._identify_intent(user_query, notebook_cells, client_vars, chat_history)
+        # Identify the user's intent using the LLM (or fast path)
+        # If it's a modification, force GENERATE_CODE intent
+        if is_modification:
+            intent = "GENERATE_CODE"
+        else:
+            intent = self._identify_intent(user_query, notebook_cells, client_vars, chat_history)
         
         if intent == "SQL_QUERY":
             return self._handle_sql_query(user_query)
@@ -356,8 +397,7 @@ Active Variables: {json.dumps(client_vars) if client_vars else "No active variab
         elif intent == "EXPLAIN_CODE":
             return self._handle_explain_code(user_query, notebook_cells)
         elif intent == "GENERATE_CODE":
-            # Generate code context might also benefit from history but for now basics
-             return self._handle_generate_code(user_query, notebook_cells, client_vars)
+             return self._handle_generate_code(user_query, notebook_cells, client_vars, is_modification, original_code, active_cell_id)
         elif intent == "FILE_QA":
             return self._handle_file_qa(user_query)
         else:
