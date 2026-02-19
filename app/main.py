@@ -214,6 +214,29 @@ async def delete_db_connection(name: str):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to delete: {str(e)}")
+@app.put("/api/notebooks/rename")
+async def rename_notebook(req: Request):
+    data = await req.json()
+    old_name = data.get('old_name')
+    new_name = data.get('new_name')
+    
+    if not old_name or not new_name:
+        raise HTTPException(status_code=400, detail="Missing old_name or new_name")
+        
+    old_path = f'notebooks/{old_name}.json'
+    new_path = f'notebooks/{new_name}.json'
+    
+    if not os.path.exists(old_path):
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    if os.path.exists(new_path):
+        raise HTTPException(status_code=409, detail="Notebook with this name already exists")
+        
+    try:
+        os.rename(old_path, new_path)
+        return {"status": "renamed", "new_name": new_name}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Rename failed: {str(e)}")
+
 # Upload .ipynb files
 @app.post("/api/notebooks/upload")
 async def upload_notebook(file: UploadFile = File(...)):
