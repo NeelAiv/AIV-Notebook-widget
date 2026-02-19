@@ -4,6 +4,7 @@ let attachedFiles = [];
 let chatHistory = [];
 let messagePairs = []; // Tracks {userBubble, assistantBubble, prompt} for editing
 let cellCount = 0;
+let lastActiveCellId = null; // <-- Track active cell for modification
 let lastDataForChart = null;
 let pyodide = null; // Global Pyodide instance
 let showCode = true; // Global toggle: set to false to hide code blocks in AI responses
@@ -71,7 +72,7 @@ function showCustomDialog(title, message, options = {}) {
         inputEl.placeholder = options.placeholder || '';
         inputEl.value = options.defaultValue || '';
         confirmBtn.textContent = 'OK';
-        
+
         // Add keyboard support for prompt input
         inputEl.onkeydown = (e) => {
             if (e.key === 'Enter') {
@@ -80,7 +81,7 @@ function showCustomDialog(title, message, options = {}) {
                 cancelCustomDialog();
             }
         };
-        
+
         setTimeout(() => inputEl.focus(), 100);
     }
 
@@ -103,7 +104,7 @@ function closeCustomDialog() {
 function confirmCustomDialog() {
     const overlay = document.getElementById('custom-dialog-overlay');
     const inputEl = document.getElementById('custom-dialog-input');
-    
+
     let result = true;
     if (dialogConfig.type === 'prompt') {
         result = inputEl.value;
@@ -206,7 +207,7 @@ function autoResize(textarea) {
 // Initialize CodeMirror for syntax highlighting
 function initCodeMirror(textarea) {
     if (!textarea || textarea.dataset.cmInitialized) return;
-    
+
     const editor = CodeMirror.fromTextArea(textarea, {
         mode: 'python',
         lineNumbers: false,
@@ -218,7 +219,7 @@ function initCodeMirror(textarea) {
         autofocus: false,
         scrollbarStyle: 'null'
     });
-    
+
     textarea.dataset.cmInitialized = 'true';
     editor.on('change', () => {
         const placeholder = textarea.previousElementSibling;
@@ -226,158 +227,36 @@ function initCodeMirror(textarea) {
             placeholder.style.opacity = editor.getValue() ? '0' : '1';
         }
     });
-    
+
     return editor;
 }
 
 
 function focusAI() {
-  const mini = document.getElementById("ai-mini");
-  if (mini) {
-    mini.classList.add("open");
-    mini.setAttribute("aria-hidden", "false");
-  }
-  const input = document.getElementById("prompt-input");
-  if (input) input.focus();
+    const mini = document.getElementById("ai-mini");
+    if (mini) {
+        mini.classList.add("open");
+        mini.setAttribute("aria-hidden", "false");
+    }
+    const input = document.getElementById("prompt-input");
+    if (input) input.focus();
 }
 
 // Removes triple-backtick code blocks and inline backticks from a text blob
 function stripCodeBlocks(text) {
-        if (!text) return text;
-        // Remove fenced code blocks (```...```) including language hints
-        text = text.replace(/```[\s\S]*?```/g, "");
-        // Convert inline code `like_this` to plain text (remove backticks)
-        text = text.replace(/`([^`]+)`/g, "$1");
-        return text.trim();
+    if (!text) return text;
+    // Remove fenced code blocks (```...```) including language hints
+    text = text.replace(/```[\s\S]*?```/g, "");
+    // Convert inline code `like_this` to plain text (remove backticks)
+    text = text.replace(/`([^`]+)`/g, "$1");
+    return text.trim();
 }
 
 function toggleShowCode(val) {
-        if (typeof val === 'boolean') showCode = val;
-        else showCode = !showCode;
-        return showCode;
+    if (typeof val === 'boolean') showCode = val;
+    else showCode = !showCode;
+    return showCode;
 }
-
-
-
-// --- script.js ---
-// --- script.js ---
-async function initPyodide() {
-    const dot = document.getElementById('status-dot');
-    const text = document.getElementById('status-text');
-    text.innerText = "Loading Python Kernel...";
-    dot.style.color = "orange";
-
-    try {
-        pyodide = await loadPyodide();
-        // 1. Load Libraries
-        await pyodide.loadPackage(["micropip", "numpy", "pandas", "matplotlib"]);
-        // 2. Initialize Kernel
-        await pyodide.runPythonAsync(`
-            import sys
-            import io
-            import base64
-            import ast
-            import gc
-            import json
-            # Import HTTP Client for Pyodide
-            from pyodide.http import pyfetch
- 
-            # --- CONFIG: MATPLOTLIB ---
-            import matplotlib
-            matplotlib.use("Agg", force=True) 
-            import matplotlib.pyplot as plt
-            def no_op_show(*args, **kwargs): pass
-            plt.show = no_op_show
- 
-            # --- NEW: DB BRIDGE FUNCTION ---
-            # This function lets the user run: df = await query_db("SELECT * FROM table")
-            async def query_db(sql_query):
-                try:
-                    # Send SQL to main.py
-                    response = await pyfetch(
-                        url="/api/execute_sql",
-                        method="POST",
-                        headers={"Content-Type": "application/json"},
-                        body=json.dumps({"sql": sql_query})
-                    )
-                    resp_json = await response.json()
-                    if resp_json.get("status") == "error":
-                        print(f"❌ SQL Error: {resp_json.get('message')}")
-                        return None
-                    data = resp_json.get("data", [])
-                    # Convert List of Dicts -> Pandas DataFrame
-                    if data:
-                        return pd.DataFrame(data)
-                    else:
-                        print("✅ Query executed successfully (No rows returned).")
-                        return pd.DataFrame()
-                except Exception as e:
-                    print(f"⚠️ Network Error: {e}")
-                    return None
- 
-            # --- SETUP USER NAMESPACE ---
-            user_ns = {}
-            user_ns['__name__'] = '__main__'
-            user_ns['np'] = __import__('numpy')
-            user_ns['pd'] = __import__('pandas')
-            user_ns['plt'] = plt
-            # INJECT THE DB FUNCTION INTO USER SCOPE
-            user_ns['query_db'] = query_db
- 
-            def run_cell_logic(code_str):
-                stdout_capture = io.StringIO()
-                sys.stdout = stdout_capture
-                sys.stderr = stdout_capture
-                html_out = None
-                image_b64 = None
-                try:
-                    tree = ast.parse(code_str)
-                    last_node = tree.body[-1] if tree.body else None
-                    if isinstance(last_node, ast.Expr):
-                        exec(compile(ast.Module(body=tree.body[:-1], type_ignores=[]), "<string>", "exec"), user_ns)
-                        result = eval(compile(ast.Expression(body=last_node.value), "<string>", "eval"), user_ns)
-                        if hasattr(result, "_repr_html_"):
-                            html_out = result._repr_html_()
-                        elif result is not None:
-                            print(result)
-                    else:
-                        exec(code_str, user_ns)
- 
-                except Exception as e:
-                    print(f"Error: {e}")
-                finally:
-                    sys.stdout = sys.__stdout__
-                    sys.stderr = sys.__stderr__
- 
-                if plt.get_fignums():
-                    try:
-                        buf = io.BytesIO()
-                        plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)
-                        buf.seek(0)
-                        image_b64 = base64.b64encode(buf.read()).decode('utf-8')
-                    except Exception as e:
-                        print(f"Plotting Error: {e}")
-                    finally:
-                        plt.close('all')
-                        gc.collect()
- 
-                return {
-                    "text": stdout_capture.getvalue(),
-                    "html": html_out,
-                    "image": image_b64
-                }
-        `);
-
-        text.innerText = "Online";
-        dot.style.color = "#4ade80";
-        console.log("Pyodide Ready");
-    } catch (e) {
-        text.innerText = "Kernel Failed";
-        dot.style.color = "red";
-        console.error(e);
-    }
-}// --- script.js ---
-// --- script.js ---
 
 async function initPyodide() {
 
@@ -400,7 +279,8 @@ async function initPyodide() {
         // 2. Setup Environment & Helpers
 
         await pyodide.runPythonAsync(`
-
+            import micropip
+            await micropip.install("openpyxl")
             import sys
 
             import io
@@ -548,22 +428,22 @@ async function initPyodide() {
 
 // Update window.onload to include initPyodide
 window.onload = () => {
-  addCodeCell();
-  checkStatus();
-  loadConnections();
-  initPyodide();
-  initAIWidget();
-  loadChatsFromLocalStorage();
-  setInterval(checkStatus, 180000); // 3 minutes
+    addCodeCell();
+    checkStatus();
+    loadConnections();
+    initPyodide();
+    initAIWidget();
+    loadChatsFromLocalStorage();
+    setInterval(checkStatus, 180000); // 3 minutes
 
-  document.getElementById("run-btn")?.addEventListener("click", runAIQuery);
-  document.addEventListener("click", (e) => {
-  const btn = e.target.closest("[data-add-to-cell='1']");
-  if (!btn) return;
+    document.getElementById("run-btn")?.addEventListener("click", runAIQuery);
+    document.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-add-to-cell='1']");
+        if (!btn) return;
 
-  const encodedCode = btn.getAttribute("data-code") || "";
-  addGeneratedCodeToCell(encodedCode);
-});
+        const encodedCode = btn.getAttribute("data-code") || "";
+        addGeneratedCodeToCell(encodedCode);
+    });
 
 };
 
@@ -571,9 +451,10 @@ window.onload = () => {
 // --- 2. NOTEBOOK KERNEL ---
 
 async function runCode(id) {
+    lastActiveCellId = `cell-${id}`;
     const codeEditor = document.querySelector(`#cell-${id} .code-editor`);
     let code = '';
-    
+
     // Get code from CodeMirror if initialized, otherwise from textarea
     if (codeEditor.nextSibling && codeEditor.nextSibling.classList && codeEditor.nextSibling.classList.contains('CodeMirror')) {
         const cm = codeEditor.nextSibling.CodeMirror;
@@ -581,7 +462,7 @@ async function runCode(id) {
     } else {
         code = codeEditor.value;
     }
-    
+
     const outDiv = document.getElementById(`out-${id}`);
     const btn = document.getElementById(`btn-${id}`);
     if (!pyodide) { outDiv.innerText = "⚠️ Kernel loading..."; return; }
@@ -696,8 +577,8 @@ function addCodeCell(button) {
     // Auto-focus the new text area
     setTimeout(() => {
         const ta = document.querySelector(`#cell-${cellCount} textarea`);
-        if (ta) { 
-            autoResize(ta); 
+        if (ta) {
+            autoResize(ta);
             // Initialize CodeMirror for syntax highlighting
             const editor = initCodeMirror(ta);
             if (editor) {
@@ -713,26 +594,26 @@ function addCodeCell(button) {
 
 
 function shouldShowCodeForPrompt(promptText = "") {
-  const p = promptText.toLowerCase();
+    const p = promptText.toLowerCase();
 
-  // If user explicitly wants explanation, hide code by default
-  const explainIntent =
-    p.includes("explain") ||
-    p.includes("explanation") ||
-    p.includes("describe") ||
-    p.includes("meaning") ||
-    p.includes("what does") ||
-    p.includes("how does");
+    // If user explicitly wants explanation, hide code by default
+    const explainIntent =
+        p.includes("explain") ||
+        p.includes("explanation") ||
+        p.includes("describe") ||
+        p.includes("meaning") ||
+        p.includes("what does") ||
+        p.includes("how does");
 
-  // If user explicitly asks for code, allow it
-  const codeIntent =
-    p.includes("code") ||
-    p.includes("give me code") ||
-    p.includes("write code") ||
-    p.includes("generate code") ||
-    p.includes("example code");
+    // If user explicitly asks for code, allow it
+    const codeIntent =
+        p.includes("code") ||
+        p.includes("give me code") ||
+        p.includes("write code") ||
+        p.includes("generate code") ||
+        p.includes("example code");
 
-  return codeIntent ? true : !explainIntent;
+    return codeIntent ? true : !explainIntent;
 }
 
 
@@ -750,141 +631,139 @@ function shouldShowCodeForPrompt(promptText = "") {
  * @param {Array<{label: string, prompt: string, icon?: string}>} chips
  */
 function updateSuggestionChips(chips) {
-  const container = document.getElementById("ai-suggestion-chips");
-  if (!container) return;
-  container.innerHTML = "";
+    const container = document.getElementById("ai-suggestion-chips");
+    if (!container) return;
+    container.innerHTML = "";
 
-  if (!chips || chips.length === 0) return;
+    if (!chips || chips.length === 0) return;
 
-  chips.forEach((chip) => {
-    const btn = document.createElement("button");
-    btn.className = "ai-suggestion-chip";
-    btn.type = "button";
-    btn.innerHTML = `<span class="chip-icon">${chip.icon || "✨"}</span>${chip.label}`;
-    btn.addEventListener("click", () => {
-      const input = document.getElementById("prompt-input");
-      if (input) {
-        input.value = chip.prompt;
-        input.style.height = "auto";
-        input.style.height = Math.min(input.scrollHeight, 140) + "px";
-      }
-      // Clear chips and auto-send
-      container.innerHTML = "";
-      runAIQuery();
+    chips.forEach((chip) => {
+        const btn = document.createElement("button");
+        btn.className = "ai-suggestion-chip";
+        btn.type = "button";
+        btn.innerHTML = `<span class="chip-icon">${chip.icon || "✨"}</span>${chip.label}`;
+        btn.addEventListener("click", () => {
+            const input = document.getElementById("prompt-input");
+            if (input) {
+                input.value = chip.prompt; // Show prompt in input for context
+            }
+            // Clear chips and RUN SMART MODIFICATION
+            container.innerHTML = "";
+            runModificationQuery(chip.prompt);
+        });
+        container.appendChild(btn);
     });
-    container.appendChild(btn);
-  });
 }
 
 /**
  * Get context-aware suggestions based on uploaded file type.
  */
 function getSuggestionsForFile(fileName) {
-  const ext = fileName.split(".").pop().toLowerCase();
-  const name = fileName.length > 20 ? fileName.substring(0, 17) + "..." : fileName;
+    const ext = fileName.split(".").pop().toLowerCase();
+    const name = fileName.length > 20 ? fileName.substring(0, 17) + "..." : fileName;
 
-  const suggestions = {
-    csv: [
-      { label: "Load into DataFrame", prompt: `Load the uploaded CSV file "${fileName}" into a Pandas DataFrame and display it.`, icon: "📊" },
-      { label: "Show first 5 rows", prompt: `Show the first 5 rows of the uploaded file "${fileName}".`, icon: "👀" },
-      { label: "Describe the dataset", prompt: `Describe the dataset in "${fileName}" — show statistics, column types, and missing values.`, icon: "📈" },
-      { label: "Plot a chart", prompt: `Create a suitable visualization chart for the data in "${fileName}".`, icon: "📉" },
-    ],
-    xlsx: [
-      { label: "Load into DataFrame", prompt: `Load the uploaded Excel file "${fileName}" into a Pandas DataFrame.`, icon: "📊" },
-      { label: "Show first 5 rows", prompt: `Show the first 5 rows of the Excel file "${fileName}".`, icon: "👀" },
-      { label: "List all sheets", prompt: `List all sheet names in the Excel file "${fileName}".`, icon: "📋" },
-      { label: "Describe the dataset", prompt: `Describe the data in "${fileName}" — statistics and column info.`, icon: "📈" },
-    ],
-    xls: null, // Will fallback to xlsx
-    json: [
-      { label: "Parse this JSON", prompt: `Parse the uploaded JSON file "${fileName}" and display its structure.`, icon: "🔧" },
-      { label: "Show the structure", prompt: `Show the keys and structure of the JSON file "${fileName}".`, icon: "🗂️" },
-      { label: "Convert to DataFrame", prompt: `Convert the JSON file "${fileName}" to a Pandas DataFrame.`, icon: "📊" },
-      { label: "Extract specific fields", prompt: `What fields are available in "${fileName}"? Help me extract specific data.`, icon: "🔍" },
-    ],
-    pdf: [
-      { label: "Summarize this document", prompt: `Summarize the uploaded document "${fileName}".`, icon: "📝" },
-      { label: "List key points", prompt: `List the key points from "${fileName}".`, icon: "📌" },
-      { label: "What is this about?", prompt: `What is the document "${fileName}" about?`, icon: "❓" },
-      { label: "Extract specific info", prompt: `Help me find specific information in "${fileName}".`, icon: "🔍" },
-    ],
-    docx: null, // Will fallback to pdf
-    txt: null,  // Will fallback to pdf
-  };
+    const suggestions = {
+        csv: [
+            { label: "Load into DataFrame", prompt: `Load the uploaded CSV file "${fileName}" into a Pandas DataFrame and display it.`, icon: "📊" },
+            { label: "Show first 5 rows", prompt: `Show the first 5 rows of the uploaded file "${fileName}".`, icon: "👀" },
+            { label: "Describe the dataset", prompt: `Describe the dataset in "${fileName}" — show statistics, column types, and missing values.`, icon: "📈" },
+            { label: "Plot a chart", prompt: `Create a suitable visualization chart for the data in "${fileName}".`, icon: "📉" },
+        ],
+        xlsx: [
+            { label: "Load into DataFrame", prompt: `Load the uploaded Excel file "${fileName}" into a Pandas DataFrame.`, icon: "📊" },
+            { label: "Show first 5 rows", prompt: `Show the first 5 rows of the Excel file "${fileName}".`, icon: "👀" },
+            { label: "List all sheets", prompt: `List all sheet names in the Excel file "${fileName}".`, icon: "📋" },
+            { label: "Describe the dataset", prompt: `Describe the data in "${fileName}" — statistics and column info.`, icon: "📈" },
+        ],
+        xls: null, // Will fallback to xlsx
+        json: [
+            { label: "Parse this JSON", prompt: `Parse the uploaded JSON file "${fileName}" and display its structure.`, icon: "🔧" },
+            { label: "Show the structure", prompt: `Show the keys and structure of the JSON file "${fileName}".`, icon: "🗂️" },
+            { label: "Convert to DataFrame", prompt: `Convert the JSON file "${fileName}" to a Pandas DataFrame.`, icon: "📊" },
+            { label: "Extract specific fields", prompt: `What fields are available in "${fileName}"? Help me extract specific data.`, icon: "🔍" },
+        ],
+        pdf: [
+            { label: "Summarize this document", prompt: `Summarize the uploaded document "${fileName}".`, icon: "📝" },
+            { label: "List key points", prompt: `List the key points from "${fileName}".`, icon: "📌" },
+            { label: "What is this about?", prompt: `What is the document "${fileName}" about?`, icon: "❓" },
+            { label: "Extract specific info", prompt: `Help me find specific information in "${fileName}".`, icon: "🔍" },
+        ],
+        docx: null, // Will fallback to pdf
+        txt: null,  // Will fallback to pdf
+    };
 
-  // Fallbacks
-  if (!suggestions[ext] && (ext === "xls")) return suggestions["xlsx"];
-  if (!suggestions[ext] && (ext === "docx" || ext === "txt")) return suggestions["pdf"];
+    // Fallbacks
+    if (!suggestions[ext] && (ext === "xls")) return suggestions["xlsx"];
+    if (!suggestions[ext] && (ext === "docx" || ext === "txt")) return suggestions["pdf"];
 
-  return suggestions[ext] || [
-    { label: "Analyze this file", prompt: `Analyze the uploaded file "${fileName}".`, icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>' },
-    { label: "What's in this file?", prompt: `What is in the uploaded file "${fileName}"?`, icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 2-3 4"></path><line x1="12" y1="17" x2="12" y2="17"></line></svg>' },
-  ];
+    return suggestions[ext] || [
+        { label: "Analyze this file", prompt: `Analyze the uploaded file "${fileName}".`, icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>' },
+        { label: "What's in this file?", prompt: `What is in the uploaded file "${fileName}"?`, icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 2-3 4"></path><line x1="12" y1="17" x2="12" y2="17"></line></svg>' },
+    ];
 }
 
 /**
  * Get context-aware suggestions based on executed code.
  */
 function getSuggestionsForCode(code, hasError, hasPlot, hasDataFrame) {
-  const codeLower = code.toLowerCase();
+    const codeLower = code.toLowerCase();
 
-  // Error case — highest priority
-  if (hasError) {
+    // Error case — highest priority
+    if (hasError) {
+        return [
+            { label: "Fix this error", prompt: "Fix the error in the code I just ran.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 L11 13"></path><path d="M14.5 2.5a9 9 0 1 1-12.7 12.7L11 13"></path></svg>' },
+            { label: "Explain what went wrong", prompt: "Explain why my code produced an error and how to fix it.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 2-3 4"></path><line x1="12" y1="17" x2="12" y2="17"></line></svg>' },
+            { label: "Try alternative approach", prompt: "Suggest an alternative approach to achieve the same result without the error.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="10" rx="2"></rect><path d="M7 7v-2a5 5 0 0 1 10 0v2"></path></svg>' },
+        ];
+    }
+
+    // Plot/visualization case
+    if (hasPlot || codeLower.includes("plt.") || codeLower.includes("matplotlib") || codeLower.includes(".plot(")) {
+        return [
+            { label: "Save this plot", prompt: "Save the plot I just generated as a PNG file.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h11l5 5v9a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline></svg>' },
+            { label: "Change color scheme", prompt: "Change the color scheme of my plot to make it more visually appealing.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a10 10 0 0 1 10 10"></path></svg>' },
+            { label: "Add title & labels", prompt: "Add a proper title, axis labels, and legend to my plot.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"></path></svg>' },
+            { label: "Explain this visualization", prompt: "Explain what this visualization shows about the data.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"></path><path d="M18 13v6"></path><path d="M13 8v11"></path><path d="M8 16v3"></path></svg>' },
+        ];
+    }
+
+    // DataFrame/pandas case
+    if (hasDataFrame || codeLower.includes("import pandas") || codeLower.includes("pd.read") || codeLower.includes("dataframe")) {
+        return [
+            { label: "Show column types", prompt: "Show the data types and info for all columns in my DataFrame.", icon: "📋" },
+            { label: "Handle missing values", prompt: "Check for and handle any missing values in my DataFrame.", icon: "🔧" },
+            { label: "Plot distribution", prompt: "Plot the distribution of numerical columns in my DataFrame.", icon: "📈" },
+            { label: "Generate summary stats", prompt: "Generate descriptive statistics for my DataFrame.", icon: "📊" },
+        ];
+    }
+
+    // General code execution
     return [
-      { label: "Fix this error", prompt: "Fix the error in the code I just ran.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 L11 13"></path><path d="M14.5 2.5a9 9 0 1 1-12.7 12.7L11 13"></path></svg>' },
-      { label: "Explain what went wrong", prompt: "Explain why my code produced an error and how to fix it.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 2-3 4"></path><line x1="12" y1="17" x2="12" y2="17"></line></svg>' },
-      { label: "Try alternative approach", prompt: "Suggest an alternative approach to achieve the same result without the error.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="10" rx="2"></rect><path d="M7 7v-2a5 5 0 0 1 10 0v2"></path></svg>' },
+        { label: "Explain this output", prompt: "Explain the output of the code I just ran.", icon: "💡" },
+        { label: "Optimize this code", prompt: "Suggest optimizations for the code I just ran.", icon: "⚡" },
+        { label: "Add error handling", prompt: "Add proper error handling to my code.", icon: "🛡️" },
     ];
-  }
-
-  // Plot/visualization case
-  if (hasPlot || codeLower.includes("plt.") || codeLower.includes("matplotlib") || codeLower.includes(".plot(")) {
-    return [
-      { label: "Save this plot", prompt: "Save the plot I just generated as a PNG file.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h11l5 5v9a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline></svg>' },
-      { label: "Change color scheme", prompt: "Change the color scheme of my plot to make it more visually appealing.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a10 10 0 0 1 10 10"></path></svg>' },
-      { label: "Add title & labels", prompt: "Add a proper title, axis labels, and legend to my plot.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"></path></svg>' },
-      { label: "Explain this visualization", prompt: "Explain what this visualization shows about the data.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"></path><path d="M18 13v6"></path><path d="M13 8v11"></path><path d="M8 16v3"></path></svg>' },
-    ];
-  }
-
-  // DataFrame/pandas case
-  if (hasDataFrame || codeLower.includes("import pandas") || codeLower.includes("pd.read") || codeLower.includes("dataframe")) {
-    return [
-      { label: "Show column types", prompt: "Show the data types and info for all columns in my DataFrame.", icon: "📋" },
-      { label: "Handle missing values", prompt: "Check for and handle any missing values in my DataFrame.", icon: "🔧" },
-      { label: "Plot distribution", prompt: "Plot the distribution of numerical columns in my DataFrame.", icon: "📈" },
-      { label: "Generate summary stats", prompt: "Generate descriptive statistics for my DataFrame.", icon: "📊" },
-    ];
-  }
-
-  // General code execution
-  return [
-    { label: "Explain this output", prompt: "Explain the output of the code I just ran.", icon: "💡" },
-    { label: "Optimize this code", prompt: "Suggest optimizations for the code I just ran.", icon: "⚡" },
-    { label: "Add error handling", prompt: "Add proper error handling to my code.", icon: "🛡️" },
-  ];
 }
 
 // ======================================================
 
 function setAILoading(isLoading) {
-  const sendBtn = document.getElementById("run-btn");
-  const sendIcon = document.getElementById("send-icon");
-  const stopIcon = document.getElementById("stop-icon");
-  if (!sendBtn || !sendIcon || !stopIcon) return;
+    const sendBtn = document.getElementById("run-btn");
+    const sendIcon = document.getElementById("send-icon");
+    const stopIcon = document.getElementById("stop-icon");
+    if (!sendBtn || !sendIcon || !stopIcon) return;
 
-  if (isLoading) {
-    sendBtn.classList.add("is-loading");
-    sendIcon.style.display = "none";
-    stopIcon.style.display = "block";
-    sendBtn.setAttribute("aria-label", "Stop");
-  } else {
-    sendBtn.classList.remove("is-loading");
-    sendIcon.style.display = "block";
-    stopIcon.style.display = "none";
-    sendBtn.setAttribute("aria-label", "Send");
-  }
+    if (isLoading) {
+        sendBtn.classList.add("is-loading");
+        sendIcon.style.display = "none";
+        stopIcon.style.display = "block";
+        sendBtn.setAttribute("aria-label", "Stop");
+    } else {
+        sendBtn.classList.remove("is-loading");
+        sendIcon.style.display = "block";
+        stopIcon.style.display = "none";
+        sendBtn.setAttribute("aria-label", "Send");
+    }
 }
 
 // ======================================================
@@ -895,17 +774,17 @@ function setAILoading(isLoading) {
  * Add edit button to a user message bubble
  */
 function addEditButton(userBubble, prompt, messageIndex) {
-  // Check if edit button already exists
-  if (userBubble.querySelector('.edit-message-btn')) return;
-  
-  const editBtn = document.createElement('button');
-  editBtn.className = 'edit-message-btn';
-  editBtn.type = 'button';
-  editBtn.title = 'Edit message';
-  editBtn.innerHTML = ICON_EDIT_MESSAGE;
-  editBtn.addEventListener('click', () => editMessage(messageIndex));
-  
-  userBubble.appendChild(editBtn);
+    // Check if edit button already exists
+    if (userBubble.querySelector('.edit-message-btn')) return;
+
+    const editBtn = document.createElement('button');
+    editBtn.className = 'edit-message-btn';
+    editBtn.type = 'button';
+    editBtn.title = 'Edit message';
+    editBtn.innerHTML = ICON_EDIT_MESSAGE;
+    editBtn.addEventListener('click', () => editMessage(messageIndex));
+
+    userBubble.appendChild(editBtn);
 }
 
 /**
@@ -913,53 +792,53 @@ function addEditButton(userBubble, prompt, messageIndex) {
  * Removes the selected message AND all subsequent messages
  */
 function editMessage(messageIndex) {
-  const messagePair = messagePairs[messageIndex];
-  if (!messagePair) return;
-  
-  const input = document.getElementById('prompt-input');
-  if (!input) return;
-  
-  // If AI is currently generating, stop it first
-  if (currentAbortController) {
-    currentAbortController.abort();
-    currentAbortController = null;
-    setAILoading(false);
-  }
-  
-  // Load the original prompt into the input field
-  input.value = messagePair.prompt;
-  
-  // Auto-resize the input
-  if (typeof autoResize === 'function') {
-    input.style.height = 'auto';
-    input.style.height = Math.min(input.scrollHeight, 140) + 'px';
-  }
-  
-  // Focus the input
-  input.focus();
-  
-  // Remove this message and ALL subsequent messages from DOM
-  // We need to remove from messageIndex onwards
-  for (let i = messageIndex; i < messagePairs.length; i++) {
-    const pair = messagePairs[i];
-    if (pair.userBubble && pair.userBubble.parentNode) {
-      pair.userBubble.remove();
+    const messagePair = messagePairs[messageIndex];
+    if (!messagePair) return;
+
+    const input = document.getElementById('prompt-input');
+    if (!input) return;
+
+    // If AI is currently generating, stop it first
+    if (currentAbortController) {
+        currentAbortController.abort();
+        currentAbortController = null;
+        setAILoading(false);
     }
-    if (pair.assistantBubble && pair.assistantBubble.parentNode) {
-      pair.assistantBubble.remove();
+
+    // Load the original prompt into the input field
+    input.value = messagePair.prompt;
+
+    // Auto-resize the input
+    if (typeof autoResize === 'function') {
+        input.style.height = 'auto';
+        input.style.height = Math.min(input.scrollHeight, 140) + 'px';
     }
-  }
-  
-  // Remove from chat history
-  // Each message pair = 2 entries in chatHistory (user + assistant)
-  // So if we're editing message at index 2, we need to remove from chatHistory[4] onwards
-  const chatStartIndex = messageIndex * 2;
-  if (chatStartIndex < chatHistory.length) {
-    chatHistory.splice(chatStartIndex);
-  }
-  
-  // Remove from messagePairs array (from messageIndex onwards)
-  messagePairs.splice(messageIndex);
+
+    // Focus the input
+    input.focus();
+
+    // Remove this message and ALL subsequent messages from DOM
+    // We need to remove from messageIndex onwards
+    for (let i = messageIndex; i < messagePairs.length; i++) {
+        const pair = messagePairs[i];
+        if (pair.userBubble && pair.userBubble.parentNode) {
+            pair.userBubble.remove();
+        }
+        if (pair.assistantBubble && pair.assistantBubble.parentNode) {
+            pair.assistantBubble.remove();
+        }
+    }
+
+    // Remove from chat history
+    // Each message pair = 2 entries in chatHistory (user + assistant)
+    // So if we're editing message at index 2, we need to remove from chatHistory[4] onwards
+    const chatStartIndex = messageIndex * 2;
+    if (chatStartIndex < chatHistory.length) {
+        chatHistory.splice(chatStartIndex);
+    }
+
+    // Remove from messagePairs array (from messageIndex onwards)
+    messagePairs.splice(messageIndex);
 }
 
 
@@ -980,54 +859,54 @@ function editMessage(messageIndex) {
 
 // ======================================================
 
-async function runAIQuery() {
-  const input = document.getElementById("prompt-input");
-  const contentArea = document.getElementById("ai-content-area");
-  const tray = document.getElementById("ai-response-tray");
-  const mini = document.getElementById("ai-mini");
+async function runAIQuery(options = {}) {
+    const input = document.getElementById("prompt-input");
+    const contentArea = document.getElementById("ai-content-area");
+    const tray = document.getElementById("ai-response-tray");
+    const mini = document.getElementById("ai-mini");
 
-  if (!input || !contentArea) return;
+    if (!input || !contentArea) return;
 
-  // If currently loading, abort
-  if (currentAbortController) {
-    currentAbortController.abort();
-    currentAbortController = null;
-    setAILoading(false);
-    return;
-  }
-
-  const prompt = input.value.trim();
-  if (!prompt && attachedFiles.length === 0) return;
-
-  // Ensure popup is open
-  if (mini) {
-    mini.classList.add("open");
-    mini.setAttribute("aria-hidden", "false");
-  }
-
-  // Collect context (same idea as your current code)
-  const cells = Array.from(document.querySelectorAll(".code-editor, .text-editor"))
-    .map((el) => (el.value !== undefined ? el.value : el.innerHTML));
-
-  // Variables from Pyodide namespace (keeps your existing approach)
-  let activeVars = [];
-  if (pyodide) {
-    try {
-      const keys = pyodide.runPython("list(userns.keys())").toJs();
-      activeVars = keys.filter(
-        (k) =>
-          !k.startsWith("_") &&
-          !["pd", "np", "plt", "querydb"].includes(k)
-      );
-    } catch (e) {
-      console.log("No vars yet");
+    // If currently loading, abort
+    if (currentAbortController) {
+        currentAbortController.abort();
+        currentAbortController = null;
+        setAILoading(false);
+        return;
     }
-  }
+
+    const prompt = options.prompt || input.value.trim();
+    if (!prompt && attachedFiles.length === 0) return;
+
+    // Ensure popup is open
+    if (mini) {
+        mini.classList.add("open");
+        mini.setAttribute("aria-hidden", "false");
+    }
+
+    // Collect context (same idea as your current code)
+    const cells = Array.from(document.querySelectorAll(".code-editor, .text-editor"))
+        .map((el) => (el.value !== undefined ? el.value : el.innerHTML));
+
+    // Variables from Pyodide namespace (keeps your existing approach)
+    let activeVars = [];
+    if (pyodide) {
+        try {
+            const keys = pyodide.runPython("list(userns.keys())").toJs();
+            activeVars = keys.filter(
+                (k) =>
+                    !k.startsWith("_") &&
+                    !["pd", "np", "plt", "querydb"].includes(k)
+            );
+        } catch (e) {
+            console.log("No vars yet");
+        }
+    }
 
     // UI: clear input immediately, add user message, and show assistant placeholder (chat style)
     input.value = "";
     if (typeof autoResize === "function") autoResize(input);
-    
+
     const startTime = Date.now();
     const timerEl = document.createElement('span');
     timerEl.style.cssText = "margin-left:auto;font-family:'Fira Code', monospace;font-size:0.85rem;color:#64748b;";
@@ -1047,7 +926,7 @@ async function runAIQuery() {
     userBubble.style.overflowWrap = 'break-word';
     userBubble.innerText = prompt;
     contentArea.appendChild(userBubble);
-    
+
     // Add edit button immediately to user message
     const messageIndex = messagePairs.length;
     messagePairs.push({ userBubble, assistantBubble: null, prompt }); // Add placeholder for assistant
@@ -1065,7 +944,7 @@ async function runAIQuery() {
     // add timer to the header
     assistantBubble.querySelector('div').appendChild(timerEl);
     contentArea.appendChild(assistantBubble);
-    
+
     // IMPORTANT: Update messagePair with assistantBubble immediately so it can be removed if user clicks edit
     messagePairs[messageIndex].assistantBubble = assistantBubble;
 
@@ -1076,90 +955,152 @@ async function runAIQuery() {
         timerEl.innerText = ((Date.now() - startTime) / 1000).toFixed(1) + 's';
     }, 100);
 
-  try {
-    // IMPORTANT: keep the SAME endpoint string you used earlier.
-    // If your old code had fetch("/query"...), use "/query". If it had fetch("query"...), use "query".
-    const endpoint = "query";
+    try {
+        // IMPORTANT: keep the SAME endpoint string you used earlier.
+        // If your old code had fetch("/query"...), use "/query". If it had fetch("query"...), use "query".
+        const endpoint = "query";
 
-    // Create abort controller for this request
-    currentAbortController = new AbortController();
-    setAILoading(true);
+        // Create abort controller for this request
+        currentAbortController = new AbortController();
+        setAILoading(true);
 
-    const resp = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prompt: prompt,
-        notebook_cells: cells,
-        variables: activeVars,
-        chat_history: chatHistory
-      }),
-      signal: currentAbortController.signal,
-    });
+        const resp = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                prompt: prompt,
+                notebook_cells: cells,
+                variables: activeVars,
+                chat_history: chatHistory,
+                // --- Pass modification fields ---
+                is_modification: options.isModification || false,
+                original_code: options.originalCode || null,
+                active_cell_id: options.activeCellId || null
+            }),
+            signal: currentAbortController.signal,
+        });
 
         if (!resp.ok) throw new Error("Server Error");
 
         const data = await resp.json();
         clearInterval(timerInt);
 
+        // --- NEW RESPONSE HANDLING LOGIC (BACKEND DRIVEN) ---
+        if (data.action === 'UPDATE_CELL' && data.cell_id && data.modified_code) {
+            const targetCell = document.getElementById(data.cell_id);
+            if (targetCell) {
+                const codeEditor = targetCell.querySelector('.code-editor');
+                const cmWrapper = codeEditor.nextSibling;
+
+                if (cmWrapper && cmWrapper.classList.contains('CodeMirror')) {
+                    const cm = cmWrapper.CodeMirror;
+                    const oldCode = cm.getValue();
+
+                    cm.setValue(data.modified_code);
+
+                    // Apply highlight
+                    cmWrapper.classList.add('cm-highlight-update');
+                    setTimeout(() => {
+                        cmWrapper.classList.remove('cm-highlight-update');
+                    }, 2500);
+
+                    // Also use our existing highlighter for line-diffs
+                    highlightChanges(cm, oldCode, data.modified_code);
+
+                    // Attach clear handler
+                    const runBtn = targetCell.querySelector('.play-btn');
+                    const newBtn = runBtn.cloneNode(true);
+                    runBtn.parentNode.replaceChild(newBtn, runBtn);
+                    newBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        clearHighlights(cm);
+                        runCode(data.cell_id.replace('cell-', ''));
+                    };
+
+                } else {
+                    codeEditor.value = data.modified_code;
+                    autoResize(codeEditor);
+                }
+            }
+        }
+
         const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
         const toolUsed = data.tool_used || ""; // Get the intent/tool used
 
         let answer = data.answer || "";
-        
+
         // Update history
         chatHistory.push({ role: "user", content: prompt });
         chatHistory.push({ role: "assistant", content: answer });
 
         // Update chat title from first AI response (only fires once — guard is in updateChatTitle)
         if (currentChatId && typeof updateChatTitle === 'function') {
-          updateChatTitle(currentChatId, answer);
+            updateChatTitle(currentChatId, answer);
         }
-        
+
         let codeHtml = "";
         const originalAnswer = answer;
 
         // Only show Add to Cell for GENERATE_CODE, not for EXPLAIN_CODE or other tools
         const isGenerateIntent = toolUsed.toUpperCase().includes("GENERATE");
-        
+
         const codeMatch = originalAnswer.match(/```python([\s\S]*?)```/);
+
+        // --- SMART MODIFICATION LOGIC ---
+        const promptLower = prompt.toLowerCase();
+        const isModification = promptLower.includes("change") ||
+            promptLower.includes("update") ||
+            promptLower.includes("fix") ||
+            promptLower.includes("add") ||
+            promptLower.includes("make it");
+
         if (codeMatch && isGenerateIntent) {
             // Only process code blocks if it's a GENERATE_CODE intent
             const code = codeMatch[1].trim();
-            if (!showCode) {
-                // User chose to hide code: remove any fenced code blocks
-                answer = stripCodeBlocks(originalAnswer);
-                codeHtml = ""; // do not render add-to-cell
+
+            if (isModification && document.querySelectorAll('.code-cell').length > 0) {
+                // AUTOMATICALLY UPDATE THE CELL
+                updateLastActiveCell(code);
+
+                // Update assistant text to reflect the action
+                answer = originalAnswer.replace(codeMatch[0], "\n\n*✅ Code updated in the active cell.*").trim();
+                codeHtml = ""; // Don't show the duplicate code block in chat
             } else {
-                // Show code: strip the python block from the visible answer and provide add-to-cell UI
-                answer = originalAnswer.replace(codeMatch[0], "").trim();
+                if (!showCode) {
+                    // User chose to hide code: remove any fenced code blocks
+                    answer = stripCodeBlocks(originalAnswer);
+                    codeHtml = ""; // do not render add-to-cell
+                } else {
+                    // Show code: strip the python block from the visible answer and provide add-to-cell UI
+                    answer = originalAnswer.replace(codeMatch[0], "").trim();
 
-                // Build code block element safely
-                const codeBlock = document.createElement('div');
-                codeBlock.style.marginTop = '10px';
-                codeBlock.style.padding = '10px';
-                codeBlock.style.background = '#e0f2fe';
-                codeBlock.style.borderRadius = '8px';
-                codeBlock.style.borderLeft = '4px solid #3b82f6';
+                    // Build code block element safely
+                    const codeBlock = document.createElement('div');
+                    codeBlock.style.marginTop = '10px';
+                    codeBlock.style.padding = '10px';
+                    codeBlock.style.background = '#e0f2fe';
+                    codeBlock.style.borderRadius = '8px';
+                    codeBlock.style.borderLeft = '4px solid #3b82f6';
 
-                const pre = document.createElement('pre');
-                pre.style.fontSize = '0.85rem';
-                pre.style.overflowX = 'auto';
-                const codeEl = document.createElement('code');
-                codeEl.textContent = code;
-                pre.appendChild(codeEl);
+                    const pre = document.createElement('pre');
+                    pre.style.fontSize = '0.85rem';
+                    pre.style.overflowX = 'auto';
+                    const codeEl = document.createElement('code');
+                    codeEl.textContent = code;
+                    pre.appendChild(codeEl);
 
-                const btn = document.createElement('button');
-                btn.type = 'button';
-                btn.className = 'add-to-cell-btn';
-                btn.setAttribute('data-add-to-cell', '1');
-                btn.setAttribute('data-code', encodeURIComponent(code));
-                btn.style.cssText = 'background:#3b82f6;color:white;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;margin-top:8px';
-                btn.innerText = 'Add to Cell';
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'add-to-cell-btn';
+                    btn.setAttribute('data-add-to-cell', '1');
+                    btn.setAttribute('data-code', encodeURIComponent(code));
+                    btn.style.cssText = 'background:#3b82f6;color:white;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;margin-top:8px';
+                    btn.innerText = 'Add to Cell';
 
-                codeBlock.appendChild(pre);
-                codeBlock.appendChild(btn);
-                codeHtml = codeBlock; // DOM element
+                    codeBlock.appendChild(pre);
+                    codeBlock.appendChild(btn);
+                    codeHtml = codeBlock; // DOM element
+                }
             }
         } else if (codeMatch && !isGenerateIntent) {
             // If it's EXPLAIN_CODE or other intent, strip code blocks but don't show Add to Cell
@@ -1206,347 +1147,347 @@ async function runAIQuery() {
         attachedFiles = [];
         const chipsEl = document.getElementById('ai-file-chips');
         if (chipsEl) chipsEl.innerHTML = '';
-  } catch (e) {
-    clearInterval(timerInt);
-    if (e.name === 'AbortError') {
-      // User cancelled - update the assistant bubble
-      assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><strong>Assistant</strong></div><div style="margin-top:8px;color:#94a3b8;font-style:italic;">Response cancelled.</div>`;
-    } else {
-      contentArea.innerHTML = `<p style="color:red;padding:15px;">Error: ${e.message}</p>`;
+    } catch (e) {
+        clearInterval(timerInt);
+        if (e.name === 'AbortError') {
+            // User cancelled - update the assistant bubble
+            assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><strong>Assistant</strong></div><div style="margin-top:8px;color:#94a3b8;font-style:italic;">Response cancelled.</div>`;
+        } else {
+            contentArea.innerHTML = `<p style="color:red;padding:15px;">Error: ${e.message}</p>`;
+        }
+    } finally {
+        currentAbortController = null;
+        setAILoading(false);
     }
-  } finally {
-    currentAbortController = null;
-    setAILoading(false);
-  }
 }
 
 
 function updateMaximizeButton(maxBtn, isDocked) {
-  if (!maxBtn) return;
-  
-  if (isDocked) {
-    // Show minimize icon
-    maxBtn.innerHTML = ICON_MINIMIZE;
-    maxBtn.setAttribute("aria-label", "Minimize");
-    maxBtn.setAttribute("title", "Minimize");
-  } else {
-    // Show maximize icon
-    maxBtn.innerHTML = ICON_MAXIMIZE;
-    maxBtn.setAttribute("aria-label", "Maximize");
-    maxBtn.setAttribute("title", "Maximize");
-  }
+    if (!maxBtn) return;
+
+    if (isDocked) {
+        // Show minimize icon
+        maxBtn.innerHTML = ICON_MINIMIZE;
+        maxBtn.setAttribute("aria-label", "Minimize");
+        maxBtn.setAttribute("title", "Minimize");
+    } else {
+        // Show maximize icon
+        maxBtn.innerHTML = ICON_MAXIMIZE;
+        maxBtn.setAttribute("aria-label", "Maximize");
+        maxBtn.setAttribute("title", "Maximize");
+    }
 }
 
 function initAIWidget() {
-  const fab = document.getElementById("ai-fab");
-  const mini = document.getElementById("ai-mini");
-  const closeBtn = document.getElementById("ai-mini-close");
-  const maxBtn = document.getElementById("ai-mini-max");
-  const input = document.getElementById("prompt-input");
-  const sendBtn = document.getElementById("run-btn");
-  const resizeHandle = document.querySelector(".ai-resize-handle");
+    const fab = document.getElementById("ai-fab");
+    const mini = document.getElementById("ai-mini");
+    const closeBtn = document.getElementById("ai-mini-close");
+    const maxBtn = document.getElementById("ai-mini-max");
+    const input = document.getElementById("prompt-input");
+    const sendBtn = document.getElementById("run-btn");
+    const resizeHandle = document.querySelector(".ai-resize-handle");
 
-  if (!fab || !mini) return;
+    if (!fab || !mini) return;
 
-  // Resize state
-  let isResizing = false;
-  let startX = 0;
-  let startWidth = 450;
+    // Resize state
+    let isResizing = false;
+    let startX = 0;
+    let startWidth = 450;
 
-  // Restore saved width from localStorage
-  const savedWidth = localStorage.getItem('ai-panel-width');
-  if (savedWidth) {
-    mini.style.setProperty('--ai-panel-width', savedWidth);
-  }
-
-  // State: whether popup is open and last used popup mode
-  let isOpen = mini.classList.contains('open');
-  let popupMode = localStorage.getItem('ai-popup-mode') || 'min';
-
-  const setOpen = (open) => {
-    if (!open) {
-      // Save current mode (min or max) before closing but do not reset it
-      const currentMode = mini.classList.contains("docked") ? 'max' : 'min';
-      popupMode = currentMode;
-      localStorage.setItem('ai-popup-mode', popupMode);
-      isOpen = false;
-
-      // Kill transition so it vanishes instantly
-      mini.style.transition = 'none';
-      // remove visual classes (panel closed)
-      mini.classList.remove("open");
-      mini.classList.remove("docked");
-      mini.setAttribute("aria-hidden", "true");
-      const content = document.querySelector(".content");
-      if (content) {
-        content.style.transition = 'none';
-        content.classList.remove("ai-docked");
-        content.style.setProperty('--ai-panel-width', '');
-        content.style.marginRight = '';
-        // Force a layout reflow to ensure immediate visual update when closing
-        content.offsetHeight; // Trigger reflow
-      }
-      // Re-enable transitions after a frame for future opens
-      requestAnimationFrame(() => {
-        mini.style.transition = '';
-        if (content) content.style.transition = '';
-      });
-      return;
+    // Restore saved width from localStorage
+    const savedWidth = localStorage.getItem('ai-panel-width');
+    if (savedWidth) {
+        mini.style.setProperty('--ai-panel-width', savedWidth);
     }
 
-    // Opening - re-read popupMode from localStorage to support dynamic mode changes
-    popupMode = localStorage.getItem('ai-popup-mode') || 'min';
-    isOpen = true;
-    mini.classList.add("open");
-    mini.setAttribute("aria-hidden", "false");
+    // State: whether popup is open and last used popup mode
+    let isOpen = mini.classList.contains('open');
+    let popupMode = localStorage.getItem('ai-popup-mode') || 'min';
 
-    // Restore to maximized (docked) mode if it was previously
-    if (popupMode === 'max') {
-      mini.classList.add("docked");
-      // Update button to show minimize icon
-      updateMaximizeButton(maxBtn, true);
-      const content = document.querySelector(".content");
-      if (content) {
-        const currentWidth = mini.style.getPropertyValue('--ai-panel-width') || '450px';
-        // Disable transitions for instant layout change
-        content.style.transition = 'none';
-        content.classList.add("ai-docked");
-        // Set both inline style and CSS custom property for consistency
-        content.style.setProperty('--ai-panel-width', currentWidth);
-        content.style.marginRight = currentWidth;
-        // Force a layout reflow to ensure immediate visual update
-        content.offsetHeight; // Trigger reflow
-        // Re-enable transitions after the change
-        requestAnimationFrame(() => {
-          content.style.transition = '';
-        });
-      }
-    } else {
-      // ensure undocked when opening in min mode
-      mini.classList.remove("docked");
-      // Update button to show maximize icon
-      updateMaximizeButton(maxBtn, false);
-    }
+    const setOpen = (open) => {
+        if (!open) {
+            // Save current mode (min or max) before closing but do not reset it
+            const currentMode = mini.classList.contains("docked") ? 'max' : 'min';
+            popupMode = currentMode;
+            localStorage.setItem('ai-popup-mode', popupMode);
+            isOpen = false;
 
-    if (input) input.focus();
-  };
-
-  fab.addEventListener("click", () => {
-    // First FAB click on a new notebook with no chats: auto-create the first chat
-    if (chats.length === 0) {
-      const flagKey = `fab_first_click_${currentNotebookId}`;
-      if (!localStorage.getItem(flagKey)) {
-        localStorage.setItem(flagKey, '1');
-        createNewChat(); // opens popup and creates the first chat
-        return;
-      }
-    }
-    setOpen(!isOpen);
-  });
-  if (closeBtn) closeBtn.addEventListener("click", () => setOpen(false));
-
-  if (maxBtn) {
-    maxBtn.addEventListener("click", () => {
-      // Toggle docked state instead of expanded
-      const isDocked = mini.classList.toggle("docked");
-      
-      // Update button icon and label
-      updateMaximizeButton(maxBtn, isDocked);
-      
-      // Save the new mode to state and localStorage
-      popupMode = isDocked ? 'max' : 'min';
-      localStorage.setItem('ai-popup-mode', popupMode);
-      
-      // Adjust main content margin
-      const content = document.querySelector(".content");
-      if (content) {
-        // Disable transitions for instant layout change
-        content.style.transition = 'none';
-        
-        if (isDocked) {
-          // Use saved width or default
-          const currentWidth = mini.style.getPropertyValue('--ai-panel-width') || '450px';
-          content.classList.add("ai-docked");
-          // Set both inline style and CSS custom property for consistency
-          content.style.setProperty('--ai-panel-width', currentWidth);
-          content.style.marginRight = currentWidth;
-        } else {
-          content.classList.remove("ai-docked");
-          content.style.setProperty('--ai-panel-width', '');
-          content.style.marginRight = '';
+            // Kill transition so it vanishes instantly
+            mini.style.transition = 'none';
+            // remove visual classes (panel closed)
+            mini.classList.remove("open");
+            mini.classList.remove("docked");
+            mini.setAttribute("aria-hidden", "true");
+            const content = document.querySelector(".content");
+            if (content) {
+                content.style.transition = 'none';
+                content.classList.remove("ai-docked");
+                content.style.setProperty('--ai-panel-width', '');
+                content.style.marginRight = '';
+                // Force a layout reflow to ensure immediate visual update when closing
+                content.offsetHeight; // Trigger reflow
+            }
+            // Re-enable transitions after a frame for future opens
+            requestAnimationFrame(() => {
+                mini.style.transition = '';
+                if (content) content.style.transition = '';
+            });
+            return;
         }
-        
-        // Force a layout reflow to ensure immediate visual update
-        // This is necessary because we disabled transitions
-        content.offsetHeight; // Trigger reflow
-        
-        // Re-enable transitions after the change
-        requestAnimationFrame(() => {
-          content.style.transition = '';
+
+        // Opening - re-read popupMode from localStorage to support dynamic mode changes
+        popupMode = localStorage.getItem('ai-popup-mode') || 'min';
+        isOpen = true;
+        mini.classList.add("open");
+        mini.setAttribute("aria-hidden", "false");
+
+        // Restore to maximized (docked) mode if it was previously
+        if (popupMode === 'max') {
+            mini.classList.add("docked");
+            // Update button to show minimize icon
+            updateMaximizeButton(maxBtn, true);
+            const content = document.querySelector(".content");
+            if (content) {
+                const currentWidth = mini.style.getPropertyValue('--ai-panel-width') || '450px';
+                // Disable transitions for instant layout change
+                content.style.transition = 'none';
+                content.classList.add("ai-docked");
+                // Set both inline style and CSS custom property for consistency
+                content.style.setProperty('--ai-panel-width', currentWidth);
+                content.style.marginRight = currentWidth;
+                // Force a layout reflow to ensure immediate visual update
+                content.offsetHeight; // Trigger reflow
+                // Re-enable transitions after the change
+                requestAnimationFrame(() => {
+                    content.style.transition = '';
+                });
+            }
+        } else {
+            // ensure undocked when opening in min mode
+            mini.classList.remove("docked");
+            // Update button to show maximize icon
+            updateMaximizeButton(maxBtn, false);
+        }
+
+        if (input) input.focus();
+    };
+
+    fab.addEventListener("click", () => {
+        // First FAB click on a new notebook with no chats: auto-create the first chat
+        if (chats.length === 0) {
+            const flagKey = `fab_first_click_${currentNotebookId}`;
+            if (!localStorage.getItem(flagKey)) {
+                localStorage.setItem(flagKey, '1');
+                createNewChat(); // opens popup and creates the first chat
+                return;
+            }
+        }
+        setOpen(!isOpen);
+    });
+    if (closeBtn) closeBtn.addEventListener("click", () => setOpen(false));
+
+    if (maxBtn) {
+        maxBtn.addEventListener("click", () => {
+            // Toggle docked state instead of expanded
+            const isDocked = mini.classList.toggle("docked");
+
+            // Update button icon and label
+            updateMaximizeButton(maxBtn, isDocked);
+
+            // Save the new mode to state and localStorage
+            popupMode = isDocked ? 'max' : 'min';
+            localStorage.setItem('ai-popup-mode', popupMode);
+
+            // Adjust main content margin
+            const content = document.querySelector(".content");
+            if (content) {
+                // Disable transitions for instant layout change
+                content.style.transition = 'none';
+
+                if (isDocked) {
+                    // Use saved width or default
+                    const currentWidth = mini.style.getPropertyValue('--ai-panel-width') || '450px';
+                    content.classList.add("ai-docked");
+                    // Set both inline style and CSS custom property for consistency
+                    content.style.setProperty('--ai-panel-width', currentWidth);
+                    content.style.marginRight = currentWidth;
+                } else {
+                    content.classList.remove("ai-docked");
+                    content.style.setProperty('--ai-panel-width', '');
+                    content.style.marginRight = '';
+                }
+
+                // Force a layout reflow to ensure immediate visual update
+                // This is necessary because we disabled transitions
+                content.offsetHeight; // Trigger reflow
+
+                // Re-enable transitions after the change
+                requestAnimationFrame(() => {
+                    content.style.transition = '';
+                });
+            }
+
+            // Keep focus on input
+            if (input) input.focus();
         });
-      }
-      
-      // Keep focus on input
-      if (input) input.focus();
-    });
-  }
-
-  // Resize functionality
-  if (resizeHandle) {
-    resizeHandle.addEventListener("mousedown", (e) => {
-      isResizing = true;
-      startX = e.clientX;
-      startWidth = mini.offsetWidth;
-      document.body.style.cursor = "col-resize";
-      document.body.style.userSelect = "none";
-      // Disable transitions for instant resize
-      mini.style.transition = "none";
-      const content = document.querySelector(".content");
-      if (content) content.style.transition = "none";
-      e.preventDefault();
-    });
-  }
-
-  document.addEventListener("mousemove", (e) => {
-    if (!isResizing) return;
-
-    // Calculate new width (dragging left increases width, dragging right decreases)
-    const deltaX = startX - e.clientX;
-    const newWidth = Math.min(Math.max(startWidth + deltaX, 400), 800);
-
-    // Update panel width using CSS custom property
-    mini.style.setProperty("--ai-panel-width", newWidth + "px");
-
-    // Update content margin to match
-    const content = document.querySelector(".content");
-    if (content && mini.classList.contains("docked")) {
-      // Set both inline style and CSS custom property for consistency
-      content.style.setProperty("--ai-panel-width", newWidth + "px");
-      content.style.marginRight = newWidth + "px";
     }
-  });
 
-  document.addEventListener("mouseup", () => {
-    if (isResizing) {
-      isResizing = false;
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-      // Re-enable transitions
-      mini.style.transition = "";
-      const content = document.querySelector(".content");
-      if (content) content.style.transition = "";
-
-      // Save width to localStorage
-      const width = mini.style.getPropertyValue("--ai-panel-width");
-      if (width) {
-        localStorage.setItem("ai-panel-width", width);
-      }
+    // Resize functionality
+    if (resizeHandle) {
+        resizeHandle.addEventListener("mousedown", (e) => {
+            isResizing = true;
+            startX = e.clientX;
+            startWidth = mini.offsetWidth;
+            document.body.style.cursor = "col-resize";
+            document.body.style.userSelect = "none";
+            // Disable transitions for instant resize
+            mini.style.transition = "none";
+            const content = document.querySelector(".content");
+            if (content) content.style.transition = "none";
+            e.preventDefault();
+        });
     }
-  });
 
-  if (sendBtn) sendBtn.addEventListener("click", runAIQuery);
+    document.addEventListener("mousemove", (e) => {
+        if (!isResizing) return;
 
-  // --- File Upload ---
-  const attachBtn = document.getElementById("ai-attach-btn");
-  const fileInput = document.getElementById("ai-file-input");
-  const fileChips = document.getElementById("ai-file-chips");
+        // Calculate new width (dragging left increases width, dragging right decreases)
+        const deltaX = startX - e.clientX;
+        const newWidth = Math.min(Math.max(startWidth + deltaX, 400), 800);
 
-  if (attachBtn && fileInput) {
-    attachBtn.addEventListener("click", () => fileInput.click());
+        // Update panel width using CSS custom property
+        mini.style.setProperty("--ai-panel-width", newWidth + "px");
 
-    fileInput.addEventListener("change", () => {
-      const files = Array.from(fileInput.files);
-      files.forEach((file) => {
-        attachedFiles.push(file);
-        renderFileChip(file, fileChips);
-      });
-      fileInput.value = ""; // Reset so same file can be re-selected
-    });
-  }
-
-  function renderFileChip(file, container) {
-    if (!container) return;
-    const chip = document.createElement("div");
-    chip.className = "ai-file-chip";
-    const nameSpan = document.createElement("span");
-    nameSpan.textContent = file.name;
-    nameSpan.title = file.name;
-    const removeBtn = document.createElement("button");
-    removeBtn.innerHTML = "×";
-    removeBtn.title = "Remove";
-    removeBtn.addEventListener("click", () => {
-      attachedFiles = attachedFiles.filter((f) => f !== file);
-      chip.remove();
-    });
-    chip.appendChild(nameSpan);
-    chip.appendChild(removeBtn);
-    container.appendChild(chip);
-  }
-
-  // --- Microphone (Web Speech API) ---
-  const micBtn = document.getElementById("ai-mic-btn");
-  let recognition = null;
-
-  if (micBtn && ("webkitSpeechRecognition" in window || "SpeechRecognition" in window)) {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    recognition = new SpeechRecognition();
-    recognition.lang = "en-US";
-    recognition.continuous = false;
-    recognition.interimResults = true;
-
-    micBtn.addEventListener("click", () => {
-      if (micBtn.classList.contains("recording")) {
-        recognition.stop();
-        micBtn.classList.remove("recording");
-      } else {
-        recognition.start();
-        micBtn.classList.add("recording");
-      }
+        // Update content margin to match
+        const content = document.querySelector(".content");
+        if (content && mini.classList.contains("docked")) {
+            // Set both inline style and CSS custom property for consistency
+            content.style.setProperty("--ai-panel-width", newWidth + "px");
+            content.style.marginRight = newWidth + "px";
+        }
     });
 
-    recognition.onresult = (event) => {
-      let transcript = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        transcript += event.results[i][0].transcript;
-      }
-      if (input) {
-        input.value = transcript;
-        input.style.height = "auto";
-        input.style.height = Math.min(input.scrollHeight, 140) + "px";
-      }
-    };
+    document.addEventListener("mouseup", () => {
+        if (isResizing) {
+            isResizing = false;
+            document.body.style.cursor = "";
+            document.body.style.userSelect = "";
+            // Re-enable transitions
+            mini.style.transition = "";
+            const content = document.querySelector(".content");
+            if (content) content.style.transition = "";
 
-    recognition.onend = () => {
-      micBtn.classList.remove("recording");
-    };
-
-    recognition.onerror = () => {
-      micBtn.classList.remove("recording");
-    };
-  }
-
-  // --- Enter to Send, Shift+Enter for newline ---
-  if (input) {
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        runAIQuery();
-      }
+            // Save width to localStorage
+            const width = mini.style.getPropertyValue("--ai-panel-width");
+            if (width) {
+                localStorage.setItem("ai-panel-width", width);
+            }
+        }
     });
-  }
 
-  // Auto-grow textarea
-  if (input) {
-    input.addEventListener("input", () => {
-      input.style.height = "auto";
-      input.style.height = Math.min(input.scrollHeight, 140) + "px";
+    if (sendBtn) sendBtn.addEventListener("click", runAIQuery);
+
+    // --- File Upload ---
+    const attachBtn = document.getElementById("ai-attach-btn");
+    const fileInput = document.getElementById("ai-file-input");
+    const fileChips = document.getElementById("ai-file-chips");
+
+    if (attachBtn && fileInput) {
+        attachBtn.addEventListener("click", () => fileInput.click());
+
+        fileInput.addEventListener("change", () => {
+            const files = Array.from(fileInput.files);
+            files.forEach((file) => {
+                attachedFiles.push(file);
+                renderFileChip(file, fileChips);
+            });
+            fileInput.value = ""; // Reset so same file can be re-selected
+        });
+    }
+
+    function renderFileChip(file, container) {
+        if (!container) return;
+        const chip = document.createElement("div");
+        chip.className = "ai-file-chip";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        nameSpan.title = file.name;
+        const removeBtn = document.createElement("button");
+        removeBtn.innerHTML = "×";
+        removeBtn.title = "Remove";
+        removeBtn.addEventListener("click", () => {
+            attachedFiles = attachedFiles.filter((f) => f !== file);
+            chip.remove();
+        });
+        chip.appendChild(nameSpan);
+        chip.appendChild(removeBtn);
+        container.appendChild(chip);
+    }
+
+    // --- Microphone (Web Speech API) ---
+    const micBtn = document.getElementById("ai-mic-btn");
+    let recognition = null;
+
+    if (micBtn && ("webkitSpeechRecognition" in window || "SpeechRecognition" in window)) {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        recognition = new SpeechRecognition();
+        recognition.lang = "en-US";
+        recognition.continuous = false;
+        recognition.interimResults = true;
+
+        micBtn.addEventListener("click", () => {
+            if (micBtn.classList.contains("recording")) {
+                recognition.stop();
+                micBtn.classList.remove("recording");
+            } else {
+                recognition.start();
+                micBtn.classList.add("recording");
+            }
+        });
+
+        recognition.onresult = (event) => {
+            let transcript = "";
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                transcript += event.results[i][0].transcript;
+            }
+            if (input) {
+                input.value = transcript;
+                input.style.height = "auto";
+                input.style.height = Math.min(input.scrollHeight, 140) + "px";
+            }
+        };
+
+        recognition.onend = () => {
+            micBtn.classList.remove("recording");
+        };
+
+        recognition.onerror = () => {
+            micBtn.classList.remove("recording");
+        };
+    }
+
+    // --- Enter to Send, Shift+Enter for newline ---
+    if (input) {
+        input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                runAIQuery();
+            }
+        });
+    }
+
+    // Auto-grow textarea
+    if (input) {
+        input.addEventListener("input", () => {
+            input.style.height = "auto";
+            input.style.height = Math.min(input.scrollHeight, 140) + "px";
+        });
+    }
+
+    // ESC closes
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") setOpen(false);
     });
-  }
-
-  // ESC closes
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") setOpen(false);
-  });
 }
 
 // ==========================================
@@ -1557,29 +1498,29 @@ function initAIWidget() {
  * Opens AI popup in minimized mode
  */
 function openAIPopupMinimized() {
-  localStorage.setItem('ai-popup-mode', 'min');
-  const fab = document.getElementById('ai-fab');
-  if (fab) fab.click();
+    localStorage.setItem('ai-popup-mode', 'min');
+    const fab = document.getElementById('ai-fab');
+    if (fab) fab.click();
 }
 
 /**
  * Opens AI popup in maximized mode
  */
 function openAIPopupMaximized() {
-  localStorage.setItem('ai-popup-mode', 'max');
-  const fab = document.getElementById('ai-fab');
-  if (fab) fab.click();
+    localStorage.setItem('ai-popup-mode', 'max');
+    const fab = document.getElementById('ai-fab');
+    if (fab) fab.click();
 }
 
 /**
  * Opens AI popup in a specific mode ('min' or 'max')
  */
 function openAIPopupWithMode(mode) {
-  if (mode === 'min' || mode === 'max') {
-    localStorage.setItem('ai-popup-mode', mode);
-  }
-  const fab = document.getElementById('ai-fab');
-  if (fab) fab.click();
+    if (mode === 'min' || mode === 'max') {
+        localStorage.setItem('ai-popup-mode', mode);
+    }
+    const fab = document.getElementById('ai-fab');
+    if (fab) fab.click();
 }
 
 // Add these helper functions to script.js
@@ -1595,14 +1536,14 @@ function toggleAITray() {
 function toggleDrawer(drawerName) {
     const drawer = document.getElementById(`drawer-${drawerName}`);
     if (!drawer) return;
-    
+
     const isOpen = drawer.classList.contains('open');
-    
+
     // Close all other drawers
     document.querySelectorAll('.drawer').forEach(d => {
         d.classList.remove('open');
     });
-    
+
     // Toggle the clicked drawer
     if (!isOpen) {
         drawer.classList.add('open');
@@ -1628,68 +1569,68 @@ function closeDrawer(drawerName) {
 }
 
 function addGeneratedCodeToCell(encodedCode) {
-  const code = decodeURIComponent(encodedCode || "");
+    const code = decodeURIComponent(encodedCode || "");
 
-  addCodeCell();
+    addCodeCell();
 
-  const editors = document.querySelectorAll(".code-editor");
-  const lastEditor = editors[editors.length - 1];
+    const editors = document.querySelectorAll(".code-editor");
+    const lastEditor = editors[editors.length - 1];
 
-  if (!lastEditor) return;
+    if (!lastEditor) return;
 
-  // Check if CodeMirror is initialized
-  if (lastEditor.nextSibling && lastEditor.nextSibling.classList && lastEditor.nextSibling.classList.contains('CodeMirror')) {
-    const cm = lastEditor.nextSibling.CodeMirror;
-    if (cm) {
-      cm.setValue(code);
-      cm.focus();
+    // Check if CodeMirror is initialized
+    if (lastEditor.nextSibling && lastEditor.nextSibling.classList && lastEditor.nextSibling.classList.contains('CodeMirror')) {
+        const cm = lastEditor.nextSibling.CodeMirror;
+        if (cm) {
+            cm.setValue(code);
+            cm.focus();
+        }
+    } else {
+        lastEditor.value = code;
+        autoResize(lastEditor);
+        lastEditor.focus();
     }
-  } else {
-    lastEditor.value = code;
-    autoResize(lastEditor);
-    lastEditor.focus();
-  }
 }
 
 
 // --- 4. TABS & DB (Preserved) ---
 function switchTab(view) {
-  const workspaceView = document.getElementById("workspace-view");
-  const connectionsView = document.getElementById("connections-view");
-  
-  // NEW: your floating AI widget wrapper
-  const aiWidget = document.getElementById("ai-widget");
-  const aiMini = document.getElementById("ai-mini");
+    const workspaceView = document.getElementById("workspace-view");
+    const connectionsView = document.getElementById("connections-view");
 
-  // Close all drawers when switching views
-  document.querySelectorAll('.drawer').forEach(d => {
-    d.classList.remove('open');
-  });
-  document.querySelector('.content')?.classList.remove('drawer-open');
+    // NEW: your floating AI widget wrapper
+    const aiWidget = document.getElementById("ai-widget");
+    const aiMini = document.getElementById("ai-mini");
 
-  // Update active nav item
-  document.querySelectorAll(".nav-item").forEach((el) => el.classList.remove("active"));
-  document.getElementById(`nav-${view}`)?.classList.add("active");
+    // Close all drawers when switching views
+    document.querySelectorAll('.drawer').forEach(d => {
+        d.classList.remove('open');
+    });
+    document.querySelector('.content')?.classList.remove('drawer-open');
 
-  // Hide all views
-  if (workspaceView) workspaceView.style.display = "none";
-  if (connectionsView) connectionsView.style.display = "none";
+    // Update active nav item
+    document.querySelectorAll(".nav-item").forEach((el) => el.classList.remove("active"));
+    document.getElementById(`nav-${view}`)?.classList.add("active");
 
-  // Default: hide AI on non-workspace screens
-  if (aiWidget) aiWidget.style.display = "none";
-  if (aiMini) aiMini.classList.remove("open");
+    // Hide all views
+    if (workspaceView) workspaceView.style.display = "none";
+    if (connectionsView) connectionsView.style.display = "none";
 
-  switch (view) {
-    case "connections":
-      if (connectionsView) connectionsView.style.display = "flex";
-      loadConnections?.();
-      break;
+    // Default: hide AI on non-workspace screens
+    if (aiWidget) aiWidget.style.display = "none";
+    if (aiMini) aiMini.classList.remove("open");
 
-    default: // "workspace" 
-      if (workspaceView) workspaceView.style.display = "flex";
-      if (aiWidget) aiWidget.style.display = "block";
-      break;
-  }
+    switch (view) {
+        case "connections":
+            if (connectionsView) connectionsView.style.display = "flex";
+            loadConnections?.();
+            break;
+
+        default: // "workspace" 
+            if (workspaceView) workspaceView.style.display = "flex";
+            if (aiWidget) aiWidget.style.display = "block";
+            break;
+    }
 }
 
 async function loadConnections() {
@@ -2013,39 +1954,39 @@ async function openNotebook(name) {
 function renderChatHistory(history) {
     const contentArea = document.getElementById("ai-content-area");
     contentArea.innerHTML = '';
-    
+
     history.forEach(msg => {
         const bubble = document.createElement('div');
         const isUser = msg.role === 'user';
         bubble.className = `ai-msg ${isUser ? 'user' : 'assistant'}`;
-        
+
         if (isUser) {
             bubble.style.cssText = "padding:16px 10px 10px 10px; background:#eef2ff; border-radius:10px; margin:8px 0 8px auto; width:fit-content; max-width:70%; word-wrap:break-word; white-space:pre-wrap; overflow-wrap:break-word;";
             bubble.innerText = msg.content;
         } else {
             bubble.style.cssText = "padding:16px 10px 10px 20px; background:#ffffff; border:1px solid #e6edf3; border-radius:10px; margin:8px 0;";
-            
+
             // Header
             const header = document.createElement('div');
             header.style.cssText = "display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;";
             header.innerHTML = `<strong>Assistant</strong><span style="color:#888; font-size:0.75rem;">Restored</span>`;
-            
+
             // Body
             const body = document.createElement('div');
             body.style.cssText = "font-size:0.95rem; line-height:1.5;";
-            
-             if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
+
+            if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
                 body.innerHTML = DOMPurify.sanitize(marked.parse(msg.content || ''));
             } else {
                 body.innerText = msg.content;
             }
-            
+
             bubble.appendChild(header);
             bubble.appendChild(body);
         }
         contentArea.appendChild(bubble);
     });
-    
+
     const tray = document.getElementById("ai-response-tray");
     if (tray) tray.scrollTop = tray.scrollHeight;
 }
@@ -2168,6 +2109,7 @@ function addTextCell(button) {
 function activateCell(cell) {
     document.querySelectorAll('.code-cell').forEach(c => c.classList.remove('active'));
     cell.classList.add('active');
+    lastActiveCellId = cell.id;
 }
 
 function enableTextEdit(editor) {
@@ -2590,42 +2532,247 @@ async function openSavedNotebook(notebookName) {
 
 
 // --- File Upload Logic ---
+// --- File Upload Logic ---
 async function uploadFile() {
     const fileInput = document.getElementById('file-input');
     const statusDiv = document.getElementById('upload-status');
-    
+
     if (!fileInput.files || fileInput.files.length === 0) {
         statusDiv.innerHTML = '<span style="color: #ef4444;">Please select a file first.</span>';
         return;
     }
-    
+
     const file = fileInput.files[0];
-    const formData = new FormData();
-    formData.append('file', file);
-    
-    statusDiv.innerHTML = '<span style="color: var(--text-secondary);">Uploading and processing... <span class="pulse-icon" style="display:inline-block;width:8px;height:8px;background:var(--text-secondary);border-radius:50%;"></span></span>';
-    
-    try {
-        const response = await fetch('/api/upload_file', {
-            method: 'POST',
-            body: formData
-        });
-        
-        const result = await response.json();
-        
-        if (response.ok) {
-            statusDiv.innerHTML = `<div style="color: #10b981; font-weight: 500;">✅ ${result.message}</div>`;
-            // Show context-aware suggestion chips for uploaded file
-            const fileName = file.name;
-            updateSuggestionChips(getSuggestionsForFile(fileName));
-            // Optional: clear input
-            fileInput.value = '';
-        } else {
-            statusDiv.innerHTML = `<span style="color: #ef4444;">Error: ${result.detail || 'Upload failed'}</span>`;
+    const fileName = file.name;
+    const ext = fileName.split('.').pop().toLowerCase();
+
+    statusDiv.innerHTML = '<span style="color: var(--text-secondary);">Processing... <span class="pulse-icon" style="display:inline-block;width:8px;height:8px;background:var(--text-secondary);border-radius:50%;"></span></span>';
+
+    // 1. Client-Side: Write to Pyodide FS and Generate Code Cell
+    // Generate the loading code snippet first (regardless of FS write)
+    let code = "";
+    const varName = "df_" + fileName.replace(/[^a-zA-Z0-9]/g, '_').replace(/^[0-9]/, '_');
+
+    if (ext === 'csv') {
+        code = `# Load ${fileName}\n${varName} = pd.read_csv("${fileName}")\n${varName}.head()`;
+    } else if (ext === 'xlsx' || ext === 'xls') {
+        code = `# Load ${fileName}\n${varName} = pd.read_excel("${fileName}")\n${varName}.head()`;
+    } else if (ext === 'json') {
+        code = `# Load ${fileName}\nimport json\nwith open("${fileName}") as f:\n    data = json.load(f)\nprint(data)`;
+    } else if (ext === 'parquet') {
+        code = `# Load ${fileName}\n${varName} = pd.read_parquet("${fileName}")\n${varName}.head()`;
+    } else if (ext === 'txt') {
+        code = `# Read ${fileName}\nwith open("${fileName}", "r", encoding="utf-8") as f:\n    text_content = f.read()\nprint(text_content[:500]) # First 500 chars`;
+    }
+
+    if (pyodide && code) {
+        try {
+            // Write file bytes into Pyodide's virtual filesystem
+            const buffer = await file.arrayBuffer();
+            const uint8Array = new Uint8Array(buffer);
+            pyodide.FS.writeFile(fileName, uint8Array);
+            console.log(`✅ Saved "${fileName}" to Pyodide FS (${uint8Array.length} bytes)`);
+        } catch (fsErr) {
+            // FS write failed — log the real error but still add the code cell
+            console.error("Pyodide FS.writeFile error:", fsErr.message || fsErr);
         }
-    } catch (e) {
-        statusDiv.innerHTML = `<span style="color: #ef4444;">Network Error: ${e.message}</span>`;
+
+        // Always inject the code cell for data files
+        addCodeCell();
+        const cells = document.querySelectorAll(".code-cell");
+        const lastCell = cells[cells.length - 1];
+        const textarea = lastCell ? lastCell.querySelector(".code-editor") : null;
+
+        if (textarea) {
+            // Check if CodeMirror is initialized on this textarea
+            const cmSibling = textarea.nextSibling;
+            if (cmSibling && cmSibling.classList && cmSibling.classList.contains('CodeMirror')) {
+                const cm = cmSibling.CodeMirror;
+                if (cm) {
+                    cm.setValue(code);
+                    cm.focus();
+                }
+            } else {
+                textarea.value = code;
+                autoResize(textarea);
+                textarea.focus();
+            }
+        }
+
+        statusDiv.innerHTML = `<div style="color: #10b981; font-weight: 500;">✅ "${fileName}" loaded. Code cell added below.</div>`;
+
+        // If it's a data file (csv, xlsx), we are done. 
+        // But if it's a text file, we ALSO want to send it to the server for RAG.
+        if (ext !== 'txt') {
+            fileInput.value = '';
+            return;
+        }
+    } else if (!pyodide && code) {
+        // Kernel not ready — still inject the code cell so user can run it later
+        addCodeCell();
+        const cells = document.querySelectorAll(".code-cell");
+        const lastCell = cells[cells.length - 1];
+        const textarea = lastCell ? lastCell.querySelector(".code-editor") : null;
+        if (textarea) {
+            const cmSibling = textarea.nextSibling;
+            if (cmSibling && cmSibling.classList && cmSibling.classList.contains('CodeMirror')) {
+                const cm = cmSibling.CodeMirror;
+                if (cm) cm.setValue(code);
+            } else {
+                textarea.value = code;
+                autoResize(textarea);
+            }
+        }
+        statusDiv.innerHTML = `<div style="color: #f59e0b; font-weight: 500;">⚠️ Code cell added, but kernel not ready. Run after kernel loads.</div>`;
+        if (ext !== 'txt') {
+            fileInput.value = '';
+            return;
+        }
+    }
+
+    // 2. Server-Side: Upload for RAG Context (Only if supported)
+    const serverSupported = ['txt', 'pdf', 'docx'];
+    if (serverSupported.includes(ext)) {
+        statusDiv.innerHTML = '<span style="color: var(--text-secondary);">Uploading to AI Context... <span class="pulse-icon" style="display:inline-block;width:8px;height:8px;background:var(--text-secondary);border-radius:50%;"></span></span>';
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            const response = await fetch('/api/upload_file', {
+                method: 'POST',
+                body: formData
+            });
+
+            const result = await response.json();
+
+            if (response.ok) {
+                statusDiv.innerHTML = `<div style="color: #10b981; font-weight: 500;">✅ ${result.message}</div>`;
+                updateSuggestionChips(getSuggestionsForFile(fileName));
+                fileInput.value = '';
+            } else {
+                statusDiv.innerHTML = `<span style="color: #ef4444;">Error: ${result.detail || 'Upload failed'}</span>`;
+            }
+        } catch (e) {
+            statusDiv.innerHTML = `<span style="color: #ef4444;">Network Error: ${e.message}</span>`;
+        }
+    } else {
+        // If skipped server upload and not a data file handled above
+        statusDiv.innerHTML = `<span style="color: #ef4444;">File type .${ext} is not supported.</span>`;
+        fileInput.value = '';
     }
 }
 
 
+// --- SMART CODE UPDATE SYSTEM ---
+
+function updateLastActiveCell(newCode) {
+    // 1. Find the active cell, or default to the last code cell
+    let targetCell = document.querySelector('.code-cell.active');
+    if (!targetCell) {
+        const allCells = document.querySelectorAll('.code-cell');
+        targetCell = allCells[allCells.length - 1];
+    }
+
+    if (!targetCell) {
+        // Fallback if no cells exist at all
+        addGeneratedCodeToCell(encodeURIComponent(newCode));
+        return;
+    }
+
+    const textarea = targetCell.querySelector('.code-editor');
+
+    // Check for CodeMirror instance
+    if (textarea.nextSibling && textarea.nextSibling.CodeMirror) {
+        const cm = textarea.nextSibling.CodeMirror;
+        const oldCode = cm.getValue();
+
+        // 2. Set the new value
+        cm.setValue(newCode);
+
+        // 3. Calculate Diff & Highlight
+        highlightChanges(cm, oldCode, newCode);
+
+        // 4. Attach "Clear Highlight" listener to the Run button
+        const runBtn = targetCell.querySelector('.play-btn');
+        // Remove old listeners to avoid duplicates (cloning trick)
+        const newBtn = runBtn.cloneNode(true);
+        runBtn.parentNode.replaceChild(newBtn, runBtn);
+
+        // Re-attach the run event + the clear highlight event
+        // Extract the cell ID number from the parent ID (e.g., "cell-1")
+        // If cell has no ID, we might need a fallback, but usually they do or we find it via index.
+        // Assuming runCode logic handles finding the cell content.
+
+        newBtn.onclick = (e) => {
+            e.stopPropagation();
+            clearHighlights(cm); // Clear visuals
+            runCode(newBtn);  // Run actual code (passing the button as element)
+        };
+
+    } else {
+        // Fallback for standard textarea (no highlighting support)
+        textarea.value = newCode;
+        autoResize(textarea);
+    }
+}
+
+function highlightChanges(cm, oldText, newText) {
+    const oldLines = oldText.split('\n');
+    const newLines = newText.split('\n');
+
+    // Simple line-by-line comparison
+    newLines.forEach((line, index) => {
+        // Highlight if the line is new OR different from the old version
+        if (!oldLines[index] || line.trim() !== oldLines[index].trim()) {
+            // addLineClass(lineHandle, where, class)
+            cm.addLineClass(index, 'background', 'cm-new-code-highlight');
+        }
+    });
+}
+
+function clearHighlights(cm) {
+    const lineCount = cm.lineCount();
+    for (let i = 0; i < lineCount; i++) {
+        cm.removeLineClass(i, 'background', 'cm-new-code-highlight');
+    }
+}
+
+// --- MODIFICATION QUERY HELPER ---
+async function runModificationQuery(prompt) {
+    if (!lastActiveCellId) {
+        customAlert("Please run or select a code cell before asking for modifications.");
+        return;
+    }
+
+    const activeCell = document.getElementById(lastActiveCellId);
+    if (!activeCell) {
+        customAlert("Could not find the active cell to modify.");
+        return;
+    }
+
+    const codeEditor = activeCell.querySelector('.code-editor');
+    let originalCode = '';
+
+    // Extract code from CodeMirror instance
+    if (codeEditor.nextSibling && codeEditor.nextSibling.classList.contains('CodeMirror')) {
+        const cm = codeEditor.nextSibling.CodeMirror;
+        originalCode = cm.getValue();
+    } else {
+        originalCode = codeEditor.value;
+    }
+
+    if (!originalCode) {
+        // If the cell is empty, treat it as a normal generation query
+        document.getElementById('prompt-input').value = prompt;
+        runAIQuery();
+        return;
+    }
+
+    // Run the AI query with extra context for modification
+    runAIQuery({
+        isModification: true,
+        originalCode: originalCode,
+        activeCellId: lastActiveCellId,
+        prompt: prompt
+    });
+}

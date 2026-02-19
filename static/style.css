@@ -2862,3 +2862,24 @@ button[id$="-btn"] {
 .shortcuts-grid::-webkit-scrollbar-thumb:hover {
     background: var(--text-secondary);
 }
+
+/* In style.css */
+
+/* The highlight class for CodeMirror lines */
+.cm-new-code-highlight {
+    background-color: rgba(46, 204, 113, 0.2) !important;
+    /* Soft Green */
+    transition: background-color 0.5s ease;
+}
+
+/* Ensure the highlight overrides default themes */
+.CodeMirror-line.cm-new-code-highlight {
+    background-color: rgba(46, 204, 113, 0.2) !important;
+}
+
+/* In style.css, can go anywhere */
+.CodeMirror.cm-highlight-update {
+    background-color: #e0e7ff;
+    /* Light indigo */
+    transition: background-color 1.5s ease-out;
+}
