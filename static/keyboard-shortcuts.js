@@ -355,49 +355,92 @@ class KeyboardShortcutsManager {
     const modal = document.createElement('div');
     modal.id = 'keyboard-shortcuts-modal';
     modal.className = 'keyboard-shortcuts-modal';
-    
-    const shortcuts = this.getAllShortcuts();
-    
-    let shortcutsHtml = '';
-    shortcuts.forEach(shortcut => {
-      const display = this.getShortcutDisplay(shortcut);
-      shortcutsHtml += `
-        <div class="shortcut-item">
-          <div class="shortcut-key">${display}</div>
-          <div class="shortcut-description">${shortcut.description}</div>
-        </div>
-      `;
-    });
-    
+
+    // Define sections with their shortcuts
+    const sections = [
+      {
+        title: 'CODE EXECUTION',
+        shortcuts: [
+          { display: 'Ctrl + Enter', description: 'Run Code' }
+        ]
+      },
+      {
+        title: 'NOTEBOOK',
+        shortcuts: [
+          { display: 'Ctrl + Alt + N', description: 'New Notebook' },
+          { display: 'Ctrl + S', description: 'Save Notebook' },
+          { display: 'Ctrl + ?', description: 'Open Keyboard Shortcuts' }
+        ]
+      },
+      {
+        title: 'DRAWERS',
+        shortcuts: [
+          { display: 'Ctrl + Shift + C', description: 'Open Conversation Drawer' },
+          { display: 'Ctrl + Shift + S', description: 'Open Saved Drawer' },
+          { display: 'Ctrl + Shift + H', description: 'Open History Drawer' }
+        ]
+      },
+      {
+        title: 'AI CONTROLS',
+        shortcuts: [
+          { display: 'Alt + Enter', description: 'AI Assistant' },
+          { display: 'Ctrl + Shift + N', description: 'New Chat' }
+        ]
+      }
+    ];
+
+    // Split sections into two columns: left gets first half, right gets second half
+    const mid = Math.ceil(sections.length / 2);
+    const leftSections = sections.slice(0, mid);
+    const rightSections = sections.slice(mid);
+
+    const buildColumnHtml = (columnSections) => {
+      return columnSections.map(section => {
+        const rows = section.shortcuts.map((s, idx) => `
+          <div class="ks-row${idx === 0 ? ' ks-row--first' : ''}">
+            <span class="ks-description">${s.description}</span>
+            <span class="ks-keys">${s.display}</span>
+          </div>
+        `).join('');
+        return `
+          <div class="ks-section">
+            <div class="ks-section-title">${section.title}</div>
+            ${rows}
+          </div>
+        `;
+      }).join('');
+    };
+
     modal.innerHTML = `
       <div class="keyboard-shortcuts-overlay">
         <div class="keyboard-shortcuts-content">
           <div class="shortcuts-header">
-            <h2>Keyboard Shortcuts</h2>
+            <h2 class="shortcuts-title">Keyboard Shortcuts</h2>
             <button class="shortcuts-close" onclick="document.getElementById('keyboard-shortcuts-modal').style.display='none'" aria-label="Close">
-              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M18 6l-12 12" />
                 <path d="M6 6l12 12" />
               </svg>
             </button>
           </div>
-          <div class="shortcuts-grid">
-            ${shortcutsHtml}
+          <div class="ks-two-col">
+            <div class="ks-col">${buildColumnHtml(leftSections)}</div>
+            <div class="ks-col">${buildColumnHtml(rightSections)}</div>
           </div>
           <div class="shortcuts-footer">
-            <p>Press <kbd>Ctrl</kbd> + <kbd>?</kbd> to open this help anytime</p>
+            <span>Press <strong>Ctrl + ?</strong> to open this help anytime</span>
           </div>
         </div>
       </div>
     `;
-    
+
     // Close when clicking overlay
     modal.querySelector('.keyboard-shortcuts-overlay').addEventListener('click', (e) => {
       if (e.target === e.currentTarget) {
         modal.style.display = 'none';
       }
     });
-    
+
     return modal;
   }
 }
