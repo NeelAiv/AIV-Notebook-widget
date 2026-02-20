@@ -2580,6 +2580,7 @@ function moveCellUp(button) {
     }
 }
 
+
 function moveCellDown(button) {
     const currentCell = button.closest('.code-cell');
     if (!currentCell) return;
