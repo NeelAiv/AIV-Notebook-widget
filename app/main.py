@@ -49,10 +49,7 @@ async def run_ai_query(req: QueryRequest):
             req.prompt, 
             req.notebook_cells, 
             req.variables,
-            req.chat_history,
-            is_modification=req.is_modification,
-            original_code=req.original_code,
-            active_cell_id=req.active_cell_id
+            req.chat_history
         )
         
         history_manager.add_to_history(
@@ -403,3 +400,5 @@ async def list_notebooks():
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8090)
+
+
