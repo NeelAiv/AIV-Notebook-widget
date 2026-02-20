@@ -1,4 +1,4 @@
-# InsightEdge AI Notebook
+   # InsightEdge AI Notebook
 
 InsightEdge AI Notebook is an interactive, AI-powered workspace designed for data exploration, SQL execution, and document analysis. It combines the flexibility of notebooks with a powerful AI assistant to streamline your research and data workflows.
 
