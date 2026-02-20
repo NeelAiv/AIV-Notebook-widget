@@ -1776,24 +1776,49 @@ function closeDrawer(drawerName) {
 function addGeneratedCodeToCell(encodedCode) {
   const code = decodeURIComponent(encodedCode || "");
 
-  addCodeCell();
-
+  // Find the last code editor
   const editors = document.querySelectorAll(".code-editor");
-  const lastEditor = editors[editors.length - 1];
+  let targetEditor = null;
 
-  if (!lastEditor) return;
+  if (editors.length > 0) {
+    const lastEditor = editors[editors.length - 1];
+    let content = "";
+    
+    // Check content (CodeMirror or textarea)
+    if (lastEditor.nextSibling && lastEditor.nextSibling.classList && lastEditor.nextSibling.classList.contains('CodeMirror')) {
+      const cm = lastEditor.nextSibling.CodeMirror;
+      if (cm) content = cm.getValue();
+    } else {
+      content = lastEditor.value;
+    }
 
-  // Check if CodeMirror is initialized
-  if (lastEditor.nextSibling && lastEditor.nextSibling.classList && lastEditor.nextSibling.classList.contains('CodeMirror')) {
-    const cm = lastEditor.nextSibling.CodeMirror;
+    // If empty/whitespace only, reuse it
+    if (!content || content.trim() === "") {
+      targetEditor = lastEditor;
+    }
+  }
+
+  // If no reusable cell found, create a new one
+  if (!targetEditor) {
+    addCodeCell();
+    // Get the new last editor
+    const newEditors = document.querySelectorAll(".code-editor");
+    targetEditor = newEditors[newEditors.length - 1];
+  }
+
+  if (!targetEditor) return;
+
+  // Set the value
+  if (targetEditor.nextSibling && targetEditor.nextSibling.classList && targetEditor.nextSibling.classList.contains('CodeMirror')) {
+    const cm = targetEditor.nextSibling.CodeMirror;
     if (cm) {
       cm.setValue(code);
       cm.focus();
     }
   } else {
-    lastEditor.value = code;
-    autoResize(lastEditor);
-    lastEditor.focus();
+    targetEditor.value = code;
+    autoResize(targetEditor);
+    targetEditor.focus();
   }
 }
 
