@@ -2,9 +2,13 @@
 // MULTI-CHAT SYSTEM FUNCTIONS
 // ======================================================
 
+function getChatInitFlagKey(notebookId) {
+  return `chat_initialized_${notebookId}`;
+}
+
 /**
- * Extract meaningful title from AI response text (3-4 words)
- * Strips markdown, removes stop words, returns clean title.
+ * Extract meaningful title from user message text (3-5 words)
+ * Strips markdown, removes stop words, returns a short clean title.
  */
 function extractChatTitle(text) {
   if (!text || typeof text !== 'string') return 'New Chat';
@@ -40,13 +44,10 @@ function extractChatTitle(text) {
     .split(/\s+/)
     .filter(word => word.length > 1 && !stopWords.has(word));
 
-  // Take first 3-4 meaningful words
-  const titleWords = words.slice(0, 4);
+  // Take first 3-5 meaningful words
+  const titleWords = words.slice(0, 5);
   if (titleWords.length === 0) return 'New Chat';
-
-  return titleWords
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
+  return titleWords.join(' ');
 }
 
 /**
@@ -138,10 +139,15 @@ function createNewChat() {
     saveCurrentChat();
   }
 
+  // If we were viewing a history item transiently, clear that state — new chat should not attach to history
+  viewingHistoryItem = null;
+  viewingHistoryOriginalNotebook = null;
+
   const newChat = {
     id: 'chat_' + Date.now(),
     notebookId: currentNotebookId,
     title: 'New Chat',
+    firstMessageNamed: false,
     messages: [],
     chatHistory: [],
     createdAt: Date.now()
@@ -149,6 +155,11 @@ function createNewChat() {
 
   chats.push(newChat);
   currentChatId = newChat.id;
+  try {
+    localStorage.setItem(getChatInitFlagKey(currentNotebookId), '1');
+  } catch (e) {
+    console.warn('Failed to set chat init flag:', e);
+  }
 
   // Clear UI
   clearChatUI();
@@ -177,6 +188,9 @@ function createNewChat() {
  * Drawer stays open. Scroll position preserved.
  */
 function switchChat(chatId) {
+  // Exiting any transient history view when switching to a saved chat
+  viewingHistoryItem = null;
+  viewingHistoryOriginalNotebook = null;
   if (chatId === currentChatId) {
     // Already on this chat — just ensure popup is maximized
     if (!isPopupOpen() || !isPopupMaximized()) {
@@ -425,6 +439,37 @@ function updateChatTitle(chatId, aiResponseText) {
 }
 
 /**
+ * Update chat title from FIRST user message only.
+ * Fires once when chat still has placeholder title and no prior message history.
+ */
+function updateChatTitleFromFirstUserMessage(chatId, userMessageText) {
+  const chat = chats.find(c => c.id === chatId);
+  if (!chat) return;
+  if (chat.firstMessageNamed === true) return;
+  if (chat.title !== 'New Chat') {
+    chat.firstMessageNamed = true;
+    return;
+  }
+
+  const hadHistory =
+    (Array.isArray(chat.chatHistory) && chat.chatHistory.length > 0) ||
+    (Array.isArray(chat.messages) && chat.messages.length > 0);
+
+  if (hadHistory) {
+    chat.firstMessageNamed = true;
+    return;
+  }
+
+  const cleanTitle = extractChatTitle(userMessageText);
+  chat.title = cleanTitle || 'New Chat';
+  chat.firstMessageNamed = true;
+
+  const titleEl = document.querySelector(`[data-chat-id="${chatId}"] .chat-title`);
+  if (titleEl) titleEl.textContent = chat.title;
+  saveChatsToLocalStorage();
+}
+
+/**
  * Start inline rename for a chat
  */
 function startChatRename(chatId) {
@@ -508,6 +553,14 @@ function loadChatsFromLocalStorage() {
         currentChatId = sorted[0].id;
         loadChatToUI(currentChatId);
       }
+      if (chats.length > 0) {
+        localStorage.setItem(getChatInitFlagKey(currentNotebookId), '1');
+      }
+    } else {
+      chats = [];
+      currentChatId = null;
+      chatHistory = [];
+      messagePairs = [];
     }
 
     // Do NOT auto-create chats here.

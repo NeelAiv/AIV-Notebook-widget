@@ -9,7 +9,7 @@ python-dotenv
 torch
 nbformat
 
-
+matplotlib
 requests 
 pypdf
 python-docx
