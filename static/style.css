@@ -1985,8 +1985,9 @@ button[id$="-btn"] {
 ====================================================== */
 .ai-input-bar {
     flex-shrink: 0;
-    padding: 0px 16px 16px;
-    border-radius: 24px;
+    padding: 0px 12px 12px 12px;
+    /* Reduced side and bottom paddings */
+    border-radius: 20px;
     background: inherit;
 }
 
@@ -1995,7 +1996,8 @@ button[id$="-btn"] {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
+    /* Trimmed */
     padding-left: 4px;
 }
 
@@ -2007,8 +2009,9 @@ button[id$="-btn"] {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    padding: 3px 10px;
-    border-radius: 8px;
+    padding: 2px 8px;
+    /* Slimmer */
+    border-radius: 6px;
     background: #eef2ff;
     border: 1px solid #c7d2fe;
     font-size: 0.75rem;
@@ -2028,7 +2031,8 @@ button[id$="-btn"] {
     cursor: pointer;
     color: #6366f1;
     padding: 0;
-    font-size: 1rem;
+    font-size: 0.95rem;
+    /* Slightly smaller button icon */
     line-height: 1;
     display: flex;
 }
@@ -2043,9 +2047,10 @@ button[id$="-btn"] {
     flex-direction: column;
     background: #ffffff;
     border: 2px solid #e2e8f0;
-    border-radius: 24px;
+    border-radius: 20px;
     /* Larger radius for pill look */
-    padding: 10px 10px 10px;
+    padding: 8px 10px 8px;
+    /* Leaner padding */
     transition: all 0.2s ease;
     position: relative;
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.02);
@@ -2066,13 +2071,15 @@ button[id$="-btn"] {
     background: transparent;
     color: #0f172a;
     font-family: 'Inter', system-ui, sans-serif;
-    font-size: 1rem;
+    font-size: 0.85rem;
+    /* Shrunk from 1rem to 0.85rem (~13.6px) */
     line-height: 1.5;
     padding: 0;
-    min-height: 24px;
-    max-height: 200px;
+    min-height: 20px;
+    max-height: 150px;
+    /* Reduced max height */
     overflow-y: auto;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
 }
 
 .ai-mini-input::placeholder {
@@ -2084,14 +2091,15 @@ button[id$="-btn"] {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding-top: 4px;
+    padding-top: 2px;
 }
 
 .ai-toolbar-left,
 .ai-toolbar-right {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
+    /* Tighter gap */
 }
 
 /* Icons common styles */
@@ -2103,8 +2111,10 @@ button[id$="-btn"] {
     background: transparent;
     border: none;
     border-radius: 50%;
-    width: 34px !important;
-    height: 34px !important;
+    width: 28px !important;
+    /* Shrunk from 34px */
+    height: 28px !important;
+    /* Shrunk from 34px */
     display: flex;
     align-items: center;
     justify-content: center;
@@ -2112,7 +2122,8 @@ button[id$="-btn"] {
     overflow: visible !important;
     position: relative;
     padding: 0 !important;
-    margin: 0 2px !important;
+    margin: 0 !important;
+    /* Removed side margin */
     color: #5f6368;
     /* neutral */
     transition: background-color 0.2s ease, color 0.15s ease;
@@ -2122,8 +2133,10 @@ button[id$="-btn"] {
 .ai-input-icon svg,
 .ai-input-icon-plus svg,
 .ai-send-btn-icon svg {
-    width: 20px !important;
-    height: 20px !important;
+    width: 16px !important;
+    /* Shrunk from 20px */
+    height: 16px !important;
+    /* Shrunk from 20px */
     overflow: visible !important;
     stroke-width: 2px;
     display: block;
@@ -2316,7 +2329,8 @@ button[id$="-btn"] {
     right: 0;
     top: 56px;
     bottom: 0;
-    width: var(--ai-panel-width, 500px);
+    width: var(--ai-panel-width, 400px);
+    /* Reduced from 500px */
     height: calc(100vh - 56px);
     max-height: none;
     border-radius: 12px;
@@ -2344,12 +2358,15 @@ button[id$="-btn"] {
     left: 50%;
     right: auto;
     bottom: calc(20px + 52px + 15px);
-    width: min(700px, calc(100vw - 30px));
+    width: min(550px, calc(100vw - 50px));
+    /* Reduced from 700px */
     max-width: calc(100vw - 40px);
-    max-height: calc(85vh - 50px);
+    max-height: calc(75vh - 200px);
+    /* Reduced from 85vh */
     display: flex;
     flex-direction: column;
-    border-radius: 26px;
+    border-radius: 20px;
+    /* Originally 26px */
     border: 1px solid rgba(148, 163, 184, 0.35);
     background: #ffffff;
     box-shadow: 0 16px 50px rgba(2, 6, 23, 0.18);
@@ -2392,7 +2409,8 @@ button[id$="-btn"] {
 /* Fix for body padding to prevent border overflow */
 .ai-mini-body {
     flex: 1;
-    padding: 20px 16px 12px 23px;
+    padding: 12px 12px 8px 16px;
+    /* Reduced from 20px 16px 12px 23px */
     overflow-y: auto;
     overflow-x: hidden;
     min-height: 0;
@@ -2406,14 +2424,18 @@ button[id$="-btn"] {
 
 /* Fix message padding to prevent overflow */
 .ai-msg.assistant {
-    padding: 18px 8px 12px 23px !important;
-    margin: 20px 0 !important;
+    padding: 12px 10px 12px 16px !important;
+    /* Reduced padding */
+    margin: 12px 0 !important;
+    /* Tighten margins */
     box-sizing: border-box;
 }
 
 .ai-msg.user {
-    padding: 14px 8px 12px 23px !important;
-    margin: 20px 0 20px auto !important;
+    padding: 10px 12px !important;
+    /* Reduced padding */
+    margin: 12px 0 12px auto !important;
+    /* Tighten margins */
     box-sizing: border-box;
     position: relative;
     /* Enable absolute positioning for edit button */
@@ -2457,6 +2479,168 @@ button[id$="-btn"] {
     height: 18px;
     stroke: #64748b;
 }
+
+/* ======================================================
+   INLINE EDIT MODE STYLES
+====================================================== */
+
+/* Hide pencil button while editing */
+.ai-msg.user.editing .edit-message-btn {
+    display: none;
+}
+
+/* Textarea that blends seamlessly with the user bubble background */
+.inline-edit-textarea {
+    width: 100%;
+    min-height: 36px;
+    padding: 0;
+    margin: 0;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-family: inherit;
+    font-size: inherit;
+    line-height: 1.5;
+    color: inherit;
+    resize: none;
+    overflow: hidden;
+    word-wrap: break-word;
+    white-space: pre-wrap;
+    box-sizing: border-box;
+}
+
+.inline-edit-textarea:focus {
+    outline: none;
+}
+
+/* Action buttons row — Send + Cancel use .notebook-btn */
+.inline-edit-actions {
+    display: flex;
+    gap: 4px;
+    justify-content: flex-end;
+    margin-top: 6px;
+}
+
+/* ======================================================
+   AI CODE PROPOSAL ACTIONS (Colab-like)
+====================================================== */
+
+.ai-code-proposal {
+    margin-top: 10px;
+    border: 1px solid #dbeafe;
+    background: #f8fbff;
+    border-radius: 10px;
+    padding: 10px;
+}
+
+.ai-proposal-info {
+    font-size: 0.82rem;
+    color: #475569;
+}
+
+.ai-proposal-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+}
+
+.ai-proposal-btn {
+    border: none;
+    background: transparent;
+    color: #0b57d0;
+    font-size: 0.82rem;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.ai-proposal-btn svg {
+    width: 16px;
+    height: 16px;
+}
+
+.ai-proposal-btn.primary {
+    background: #e8f0fe;
+}
+
+.ai-proposal-btn:hover {
+    background: #e8f0fe;
+}
+
+.ai-proposal-status {
+    font-size: 0.8rem;
+    color: #2563eb;
+}
+
+.ai-inline-diff {
+    font-family: 'Fira Code', monospace;
+    font-size: 0.78rem;
+    line-height: 1.45;
+    border: 1px solid #dbe6ef;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #fff;
+}
+
+.ai-diff-row {
+    display: flex;
+    gap: 10px;
+    padding: 3px 8px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.ai-diff-row .ai-diff-prefix {
+    min-width: 12px;
+    color: #64748b;
+}
+
+.ai-diff-row.add {
+    background: #dcfce7;
+}
+
+.ai-diff-row.add .ai-diff-prefix {
+    color: #166534;
+}
+
+.ai-diff-row.remove {
+    background: #fee2e2;
+}
+
+.ai-diff-row.remove .ai-diff-prefix {
+    color: #991b1b;
+}
+
+.ai-diff-row.context {
+    background: #f8fafc;
+}
+
+.code-cell.ai-cell-preview {
+    box-shadow: inset 0 0 0 2px #93c5fd;
+}
+
+.code-cell.ai-cell-updated {
+    animation: aiCellFlash 1.2s ease;
+}
+
+@keyframes aiCellFlash {
+    0% {
+        box-shadow: inset 0 0 0 2px #2563eb;
+        background: rgba(37, 99, 235, 0.06);
+    }
+    100% {
+        box-shadow: none;
+        background: transparent;
+    }
+}
+
 
 /* ======================================================
    MULTI-CHAT SYSTEM STYLES
@@ -3001,3 +3185,31 @@ button[id$="-btn"] {
     }
 }
 
+.notebook-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 10px 16px;
+    border-radius: 6px;
+    color: currentColor;
+    transition: all 0.2s ease;
+    font-size: 15px;
+}
+
+.notebook-btn:hover {
+    background: rgba(37, 99, 235, 0.1);
+    color: #2563eb;
+}
+
+.notebook-btn:hover svg {
+    stroke: #2563eb;
+}
+
+.notebook-btn svg {
+    transition: stroke 0.2s ease;
+    width: 15px;
+    height: 15px;
+}

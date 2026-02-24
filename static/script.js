@@ -3,10 +3,12 @@ let attachedFiles = [];
 // Global chat history
 let chatHistory = [];
 let messagePairs = []; // Tracks {userBubble, assistantBubble, prompt} for editing
+let editingMessageIndex = null; // Index of message currently being edited inline (null = none)
 let cellCount = 0;
 let lastDataForChart = null;
 let pyodide = null; // Global Pyodide instance
 let showCode = true; // Global toggle: set to false to hide code blocks in AI responses
+let pendingCodeProposal = null; // Pending AI code action for the active code cell
 
 // =======================
 // LOADING SCREEN MANAGEMENT
@@ -265,7 +267,10 @@ function setNotebookTitle(name) {
 // Multi-Chat System
 let currentChatId = null;
 let chats = [];
-let currentNotebookId = 'default_notebook';
+let currentNotebookId = 'notebook_' + Date.now();
+// Transient state when viewing a history item (do NOT attach to current notebook)
+let viewingHistoryItem = null; // raw history item object when viewing from History
+let viewingHistoryOriginalNotebook = null; // display_name of original notebook if discovered
 
 // Per-drawer selection state (persists across open/close)
 let selectedSavedNotebook = null;  // display_name string
@@ -275,6 +280,14 @@ let selectedHistoryId     = null;  // numeric id
 let isDirty         = false;  // true when unsaved changes exist
 let isNotebookSaved = false;  // true once the notebook has been saved at least once
 let currentNotebookName = null; // display name of the active notebook (null if never saved)
+
+function persistActiveNotebookId() {
+    try {
+        localStorage.setItem('active_notebook_id', currentNotebookId);
+    } catch (e) {
+        console.warn('Failed to persist active notebook id:', e);
+    }
+}
 
 // Mark the current notebook as having unsaved changes
 function markDirty() {
@@ -335,6 +348,9 @@ const ICON_EDIT = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24
 const ICON_EDIT_OFF = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="-3 -3 30 30" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m10 10-6.157 6.162a2 2 0 0 0-.5.833l-1.322 4.36a.5.5 0 0 0 .622.624l4.358-1.323a2 2 0 0 0 .83-.5L14 13.982"/><path d="m12.829 7.172 4.359-4.346a1 1 0 1 1 3.986 3.986l-4.353 4.353"/><path d="m15 5 4 4"/><path d="m2 2 20 20"/></svg>`;
 const ICON_LOADER = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="loader-icon"><path d="M12 2v4"/><path d="m16.2 7.8 2.9-2.9"/><path d="M18 12h4"/><path d="m16.2 16.2 2.9 2.9"/><path d="M12 18v4"/><path d="m4.9 19.1 2.9-2.9"/><path d="M2 12h4"/><path d="m4.9 4.9 2.9 2.9"/></svg>`;
 const ICON_EDIT_MESSAGE = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-pencil-icon lucide-pencil"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>`;
+const ICON_ACCEPT_CHECK = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/></svg>`;
+const ICON_ACCEPT_PLAY = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"/></svg>`;
+const ICON_CANCEL_X = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`;
 // --- 1. UTILITIES ---
 function autoResize(textarea) {
     textarea.style.height = 'auto';
@@ -400,6 +416,404 @@ function toggleShowCode(val) {
         if (typeof val === 'boolean') showCode = val;
         else showCode = !showCode;
         return showCode;
+}
+
+function getActiveCodeCell() {
+    return document.querySelector('.code-cell.active:not(.text-cell)') || null;
+}
+
+function getCodeEditorFromCell(cellEl) {
+    if (!cellEl) return null;
+    return cellEl.querySelector('.code-editor');
+}
+
+function getCodeFromEditor(editor) {
+    if (!editor) return '';
+    if (editor.nextSibling && editor.nextSibling.classList && editor.nextSibling.classList.contains('CodeMirror')) {
+        const cm = editor.nextSibling.CodeMirror;
+        return cm ? cm.getValue() : (editor.value || '');
+    }
+    return editor.value || '';
+}
+
+function setCodeToEditor(editor, code) {
+    if (!editor) return;
+    if (editor.nextSibling && editor.nextSibling.classList && editor.nextSibling.classList.contains('CodeMirror')) {
+        const cm = editor.nextSibling.CodeMirror;
+        if (cm) {
+            cm.setValue(code);
+            cm.focus();
+            return;
+        }
+    }
+    editor.value = code;
+    autoResize(editor);
+    editor.focus();
+}
+
+function getCellNumericId(cellEl) {
+    if (!cellEl || !cellEl.id || !cellEl.id.startsWith('cell-')) return null;
+    const id = Number(cellEl.id.replace('cell-', ''));
+    return Number.isFinite(id) ? id : null;
+}
+
+function flashCellUpdated(cellEl) {
+    if (!cellEl) return;
+    cellEl.classList.remove('ai-cell-updated');
+    // Force reflow so re-adding class restarts animation
+    void cellEl.offsetWidth;
+    cellEl.classList.add('ai-cell-updated');
+    setTimeout(() => {
+        cellEl.classList.remove('ai-cell-updated');
+    }, 1200);
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text || '';
+    return div.innerHTML;
+}
+
+function isLikelyModificationPrompt(prompt = '') {
+    const p = (prompt || '').toLowerCase();
+    const editKeywords = ['change', 'modify', 'update', 'increase', 'decrease', 'fix', 'optimize', 'improve', 'edit'];
+    return editKeywords.some((w) => p.includes(w));
+}
+
+function decideCodeProposalFlow(prompt = '') {
+    const activeCell = getActiveCodeCell();
+    const activeEditor = getCodeEditorFromCell(activeCell);
+    const activeCode = activeEditor ? getCodeFromEditor(activeEditor) : '';
+    const hasActiveCellWithCode = !!(activeCell && activeEditor && activeCode.trim() !== '');
+    const isEditIntent = isLikelyModificationPrompt(prompt);
+
+    // Strict rule:
+    // EDIT only when keyword present AND active cell with existing code is available.
+    // Otherwise NEW (safe fallback).
+    const flow = (isEditIntent && hasActiveCellWithCode) ? 'edit' : 'new';
+
+    return {
+        flow,
+        activeCell,
+        activeEditor,
+        activeCode,
+        hasActiveCellWithCode,
+        isEditIntent
+    };
+}
+
+function removeCellById(cellId) {
+    const cell = document.getElementById(cellId);
+    if (!cell) return false;
+    const bar = cell.nextElementSibling;
+    if (bar && bar.classList.contains('add-cell-bar')) {
+        bar.remove();
+    }
+    cell.remove();
+    return true;
+}
+
+function createAIPreviewCodeCell(referenceActiveCell) {
+    // Reuse the last code cell if it is empty (whitespace-only) before creating a new cell.
+    const allCodeCells = Array.from(document.querySelectorAll('.code-cell:not(.text-cell)'));
+    const lastCodeCell = allCodeCells.length ? allCodeCells[allCodeCells.length - 1] : null;
+    if (lastCodeCell) {
+        const lastEditor = getCodeEditorFromCell(lastCodeCell);
+        const lastCode = lastEditor ? getCodeFromEditor(lastEditor) : '';
+        if (lastEditor && (!lastCode || lastCode.trim() === '')) {
+            return { cell: lastCodeCell, createdNewCell: false };
+        }
+    }
+
+    // Prefer inserting below selected active code cell for Colab-like behavior.
+    if (referenceActiveCell) {
+        const barBelow = referenceActiveCell.nextElementSibling;
+        if (barBelow && barBelow.classList.contains('add-cell-bar')) {
+            const addCodeBtn = barBelow.querySelector('.add-cell-btn');
+            if (addCodeBtn) {
+                addCodeCell(addCodeBtn);
+                return { cell: document.getElementById(`cell-${cellCount}`), createdNewCell: true };
+            }
+        }
+    }
+
+    // Fallback: append at bottom when no active cell context exists.
+    addCodeCell();
+    return { cell: document.getElementById(`cell-${cellCount}`), createdNewCell: true };
+}
+
+function computeLineDiff(oldText, newText) {
+    const a = (oldText || '').split('\n');
+    const b = (newText || '').split('\n');
+    const n = a.length;
+    const m = b.length;
+    const dp = Array.from({ length: n + 1 }, () => Array(m + 1).fill(0));
+
+    for (let i = n - 1; i >= 0; i--) {
+        for (let j = m - 1; j >= 0; j--) {
+            dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+        }
+    }
+
+    const rows = [];
+    let i = 0;
+    let j = 0;
+    while (i < n && j < m) {
+        if (a[i] === b[j]) {
+            rows.push({ type: 'context', line: a[i] });
+            i++;
+            j++;
+        } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+            rows.push({ type: 'remove', line: a[i] });
+            i++;
+        } else {
+            rows.push({ type: 'add', line: b[j] });
+            j++;
+        }
+    }
+    while (i < n) {
+        rows.push({ type: 'remove', line: a[i++] });
+    }
+    while (j < m) {
+        rows.push({ type: 'add', line: b[j++] });
+    }
+    return rows;
+}
+
+function buildDiffView(oldCode, newCode) {
+    const wrap = document.createElement('div');
+    wrap.className = 'ai-inline-diff';
+
+    const rows = computeLineDiff(oldCode, newCode);
+    rows.forEach((r) => {
+        const row = document.createElement('div');
+        row.className = `ai-diff-row ${r.type}`;
+        const prefix = r.type === 'add' ? '+' : r.type === 'remove' ? '-' : ' ';
+        row.innerHTML = `<span class="ai-diff-prefix">${prefix}</span><span class="ai-diff-code">${escapeHtml(r.line)}</span>`;
+        wrap.appendChild(row);
+    });
+    return wrap;
+}
+
+function setProposalActionsResolved(proposal, statusText) {
+    if (!proposal || !proposal.actionsEl) return;
+    proposal.actionsEl.innerHTML = `<span class="ai-proposal-status">${statusText}</span>`;
+}
+
+function clearPendingCodeProposal(options = {}) {
+    if (!pendingCodeProposal) return;
+
+    const {
+        restoreOriginal = false,
+        removeProposalUi = false,
+        markResolvedText = '',
+        deleteNewCell = false
+    } = options;
+    const proposal = pendingCodeProposal;
+    const targetCell = document.getElementById(proposal.cellId);
+    const activeCell = proposal.activeCellId ? document.getElementById(proposal.activeCellId) : null;
+    const newCell = proposal.newCellId ? document.getElementById(proposal.newCellId) : null;
+
+    if (restoreOriginal && proposal.proposalType === 'edit' && activeCell) {
+        const editor = getCodeEditorFromCell(activeCell);
+        if (editor) setCodeToEditor(editor, proposal.originalCode || '');
+    }
+
+    if (deleteNewCell && proposal.proposalType === 'new' && proposal.newCellId) {
+        const previewCell = document.getElementById(proposal.newCellId);
+        const isTaggedPreviewCell = !!(previewCell && previewCell.dataset && previewCell.dataset.aiPreviewCell === '1');
+        if (proposal.createdNewCell && isTaggedPreviewCell) {
+            removeCellById(proposal.newCellId);
+        } else if (!proposal.createdNewCell && previewCell) {
+            const previewEditor = getCodeEditorFromCell(previewCell);
+            if (previewEditor) {
+                setCodeToEditor(previewEditor, proposal.originalCode || '');
+            }
+            if (previewCell.dataset) {
+                delete previewCell.dataset.aiPreviewCell;
+            }
+        }
+        if (proposal.activeCellId) {
+            const previousActive = document.getElementById(proposal.activeCellId);
+            if (previousActive) activateCell(previousActive);
+        }
+        // Revert dirty state to pre-preview value if user cancels new generated cell.
+        if (typeof proposal.wasDirtyBeforePreview === 'boolean') {
+            isDirty = proposal.wasDirtyBeforePreview;
+        }
+    }
+
+    if (targetCell) targetCell.classList.remove('ai-cell-preview');
+    if (activeCell) activeCell.classList.remove('ai-cell-preview');
+    if (newCell) newCell.classList.remove('ai-cell-preview');
+
+    if (removeProposalUi && proposal.containerEl && proposal.containerEl.parentNode) {
+        proposal.containerEl.remove();
+    } else if (markResolvedText) {
+        setProposalActionsResolved(proposal, markResolvedText);
+    }
+
+    pendingCodeProposal = null;
+}
+
+function applyPendingCodeProposal(runAfterApply = false) {
+    if (!pendingCodeProposal) return;
+
+    const proposal = pendingCodeProposal;
+    const targetCellId = proposal.proposalType === 'new' ? proposal.newCellId : proposal.activeCellId;
+    const cell = document.getElementById(targetCellId || proposal.cellId);
+    const editor = getCodeEditorFromCell(cell);
+    if (!cell || !editor) {
+        clearPendingCodeProposal({ removeProposalUi: true });
+        return;
+    }
+
+    if (proposal.mode === 'diff') {
+        setCodeToEditor(editor, proposal.newCode);
+    } else if (proposal.proposalType === 'new' && cell?.dataset) {
+        // Accepting a new preview converts it to a normal, permanent cell.
+        delete cell.dataset.aiPreviewCell;
+    }
+
+    cell.classList.remove('ai-cell-preview');
+    flashCellUpdated(cell);
+    markDirty();
+    setProposalActionsResolved(proposal, runAfterApply ? 'Accepted and running...' : 'Accepted');
+
+    const cellId = getCellNumericId(cell);
+    pendingCodeProposal = null;
+    if (runAfterApply && cellId !== null) {
+        runCode(cellId);
+    }
+}
+
+function cancelPendingCodeProposal() {
+    if (!pendingCodeProposal) return;
+    if (pendingCodeProposal.mode === 'diff') {
+        clearPendingCodeProposal({ removeProposalUi: true });
+        return;
+    }
+    if (pendingCodeProposal.proposalType === 'new') {
+        clearPendingCodeProposal({ removeProposalUi: true, deleteNewCell: true });
+        return;
+    }
+    clearPendingCodeProposal({ restoreOriginal: true, removeProposalUi: true });
+}
+
+function createProposalActionsRow(proposalId) {
+    const actions = document.createElement('div');
+    actions.className = 'ai-proposal-actions';
+
+    const runBtn = document.createElement('button');
+    runBtn.type = 'button';
+    runBtn.className = 'ai-proposal-btn primary';
+    runBtn.setAttribute('data-ai-proposal-action', 'accept-run');
+    runBtn.setAttribute('data-ai-proposal-id', proposalId);
+    runBtn.innerHTML = `${ICON_ACCEPT_PLAY}<span>Accept & Run</span>`;
+
+    const acceptBtn = document.createElement('button');
+    acceptBtn.type = 'button';
+    acceptBtn.className = 'ai-proposal-btn';
+    acceptBtn.setAttribute('data-ai-proposal-action', 'accept');
+    acceptBtn.setAttribute('data-ai-proposal-id', proposalId);
+    acceptBtn.innerHTML = `${ICON_ACCEPT_CHECK}<span>Accept</span>`;
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'ai-proposal-btn';
+    cancelBtn.setAttribute('data-ai-proposal-action', 'cancel');
+    cancelBtn.setAttribute('data-ai-proposal-id', proposalId);
+    cancelBtn.innerHTML = `${ICON_CANCEL_X}<span>Cancel</span>`;
+
+    actions.appendChild(runBtn);
+    actions.appendChild(acceptBtn);
+    actions.appendChild(cancelBtn);
+    return actions;
+}
+
+function stageCodeProposalUI(code, prompt) {
+    const container = document.createElement('div');
+    container.className = 'ai-code-proposal';
+
+    // Decide flow FIRST, before creating or modifying any cell for this request.
+    const flowDecision = decideCodeProposalFlow(prompt);
+    const activeCell = flowDecision.activeCell;
+    clearPendingCodeProposal({ restoreOriginal: true, removeProposalUi: true, deleteNewCell: true });
+    const proposalType = flowDecision.flow;
+    const proposalId = `proposal_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+    let targetCell = null;
+    let originalCode = '';
+    let diffEl = null;
+
+    if (proposalType === 'edit') {
+        targetCell = activeCell;
+        originalCode = flowDecision.activeCode;
+        diffEl = buildDiffView(originalCode, code);
+        container.appendChild(diffEl);
+    } else {
+        const wasDirtyBeforePreview = isDirty;
+        const created = createAIPreviewCodeCell(activeCell);
+        targetCell = created ? created.cell : null;
+        const createdNewCell = created ? created.createdNewCell : false;
+        const targetEditor = getCodeEditorFromCell(targetCell);
+
+        if (!targetCell || !targetEditor) {
+            const info = document.createElement('div');
+            info.className = 'ai-proposal-info';
+            info.textContent = 'Could not create a new cell for preview.';
+            container.appendChild(info);
+            return container;
+        }
+
+        const originalPreviewCode = getCodeFromEditor(targetEditor);
+        activateCell(targetCell);
+        targetCell.dataset.aiPreviewCell = '1';
+        setCodeToEditor(targetEditor, code);
+        targetCell.classList.add('ai-cell-preview');
+        flashCellUpdated(targetCell);
+
+        pendingCodeProposal = {
+            proposalId,
+            cellId: targetCell.id,
+            activeCellId: activeCell ? activeCell.id : null,
+            newCellId: targetCell.id,
+            proposalType: 'new',
+            originalCode: originalPreviewCode || '',
+            newCode: code,
+            mode: 'preview',
+            createdNewCell,
+            wasDirtyBeforePreview,
+            containerEl: null,
+            actionsEl: null,
+            diffEl: null
+        };
+    }
+
+    const actionsEl = createProposalActionsRow(proposalId);
+    container.appendChild(actionsEl);
+
+    if (pendingCodeProposal && pendingCodeProposal.proposalId === proposalId && pendingCodeProposal.proposalType === 'new') {
+        pendingCodeProposal.containerEl = container;
+        pendingCodeProposal.actionsEl = actionsEl;
+        return container;
+    }
+
+    pendingCodeProposal = {
+        proposalId,
+        cellId: targetCell ? targetCell.id : null,
+        activeCellId: activeCell ? activeCell.id : null,
+        newCellId: null,
+        proposalType: 'edit',
+        originalCode,
+        newCode: code,
+        mode: 'diff',
+        containerEl: container,
+        actionsEl,
+        diffEl
+    };
+
+    return container;
 }
 
 
@@ -698,17 +1112,36 @@ window.onload = () => {
   loadConnections();
   initPyodide();
   initAIWidget();
-  loadChatsFromLocalStorage();
+  // Fresh page load starts as a NEW untitled notebook: no chats loaded.
+  currentNotebookId = 'notebook_' + Date.now();
+  currentNotebookName = null;
+  isNotebookSaved = false;
+  chats = [];
+  currentChatId = null;
+  chatHistory = [];
+  messagePairs = [];
+  persistActiveNotebookId();
+  renderChatList();
   setInterval(checkStatus, 180000); // 3 minutes
 
   document.getElementById("run-btn")?.addEventListener("click", runAIQuery);
   document.addEventListener("click", (e) => {
-  const btn = e.target.closest("[data-add-to-cell='1']");
-  if (!btn) return;
+    const actionBtn = e.target.closest("[data-ai-proposal-action]");
+    if (!actionBtn) return;
+    if (!pendingCodeProposal) return;
 
-  const encodedCode = btn.getAttribute("data-code") || "";
-  addGeneratedCodeToCell(encodedCode);
-});
+    const proposalId = actionBtn.getAttribute('data-ai-proposal-id');
+    if (proposalId !== pendingCodeProposal.proposalId) return;
+
+    const action = actionBtn.getAttribute('data-ai-proposal-action');
+    if (action === 'accept') {
+        applyPendingCodeProposal(false);
+    } else if (action === 'accept-run') {
+        applyPendingCodeProposal(true);
+    } else if (action === 'cancel') {
+        cancelPendingCodeProposal();
+    }
+  });
 
 };
 
@@ -1055,57 +1488,307 @@ function addEditButton(userBubble, prompt, messageIndex) {
 }
 
 /**
- * Edit a message - ChatGPT-style behavior
- * Removes the selected message AND all subsequent messages
+ * Cancel inline edit for a message (restoring original text).
+ * Called internally — safe to call even if no edit is active.
+ */
+function cancelInlineEdit(messageIndex) {
+  const pair = messagePairs[messageIndex];
+  if (!pair || !pair.userBubble) return;
+
+  const bubble = pair.userBubble;
+  bubble.classList.remove('editing');
+
+  // Restore original text + edit button
+  bubble.innerText = pair.prompt;
+  addEditButton(bubble, pair.prompt, messageIndex);
+
+  editingMessageIndex = null;
+}
+
+/**
+ * Edit a message — inline editing.
+ * Replaces the user bubble content with a textarea + Send/Cancel buttons.
+ * No messages are removed; chat history stays intact.
  */
 function editMessage(messageIndex) {
   const messagePair = messagePairs[messageIndex];
-  if (!messagePair) return;
-  
-  const input = document.getElementById('prompt-input');
-  if (!input) return;
-  
+  if (!messagePair || !messagePair.userBubble) return;
+
+  // If another message is already being edited, cancel it first
+  if (editingMessageIndex !== null && editingMessageIndex !== messageIndex) {
+    cancelInlineEdit(editingMessageIndex);
+  }
+
+  // If this message is already in edit mode, do nothing
+  if (editingMessageIndex === messageIndex) return;
+
   // If AI is currently generating, stop it first
   if (currentAbortController) {
     currentAbortController.abort();
     currentAbortController = null;
     setAILoading(false);
   }
-  
-  // Load the original prompt into the input field
-  input.value = messagePair.prompt;
-  
-  // Auto-resize the input
-  if (typeof autoResize === 'function') {
-    input.style.height = 'auto';
-    input.style.height = Math.min(input.scrollHeight, 140) + 'px';
-  }
-  
-  // Focus the input
-  input.focus();
-  
-  // Remove this message and ALL subsequent messages from DOM
-  // We need to remove from messageIndex onwards
-  for (let i = messageIndex; i < messagePairs.length; i++) {
-    const pair = messagePairs[i];
-    if (pair.userBubble && pair.userBubble.parentNode) {
-      pair.userBubble.remove();
+
+  editingMessageIndex = messageIndex;
+  const bubble = messagePair.userBubble;
+  const originalText = messagePair.prompt;
+
+  // Mark bubble as editing (hides pencil icon via CSS)
+  bubble.classList.add('editing');
+  bubble.innerHTML = '';
+
+  // ── Textarea ────────────────────────────────────────────────────────────
+  const textarea = document.createElement('textarea');
+  textarea.className = 'inline-edit-textarea';
+  textarea.value = originalText;
+  textarea.rows = 1;
+
+  const resizeTA = () => {
+    textarea.style.height = 'auto';
+    textarea.style.height = textarea.scrollHeight + 'px';
+  };
+  textarea.addEventListener('input', resizeTA);
+
+  // ── Action buttons ──────────────────────────────────────────────────────
+  const actions = document.createElement('div');
+  actions.className = 'inline-edit-actions';
+
+  // Send button — uses existing .notebook-btn styling
+  const sendBtn = document.createElement('button');
+  sendBtn.type = 'button';
+  sendBtn.className = 'notebook-btn';
+  sendBtn.title = 'Send (Ctrl+Enter)';
+  sendBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Send`;
+
+  sendBtn.addEventListener('click', async () => {
+    const newText = textarea.value.trim();
+    if (!newText) return;
+
+    // ── 1. Exit edit mode, update bubble ───────────────────────────────
+    bubble.classList.remove('editing');
+    bubble.innerHTML = '';
+    bubble.innerText = newText;
+    addEditButton(bubble, newText, messageIndex);
+    editingMessageIndex = null;
+
+    // ── 2. Remove all messages AFTER this one from DOM ─────────────────
+    for (let i = messageIndex + 1; i < messagePairs.length; i++) {
+      const pair = messagePairs[i];
+      if (pair.userBubble?.parentNode)      pair.userBubble.remove();
+      if (pair.assistantBubble?.parentNode) pair.assistantBubble.remove();
     }
-    if (pair.assistantBubble && pair.assistantBubble.parentNode) {
-      pair.assistantBubble.remove();
+
+    // Also remove the assistant bubble that belonged to this pair
+    if (messagePair.assistantBubble?.parentNode) {
+      messagePair.assistantBubble.remove();
+      messagePair.assistantBubble = null;
     }
+
+    // ── 3. Slice arrays to edited index ───────────────────────────────
+    messagePairs.splice(messageIndex + 1);           // keep [0..messageIndex]
+    messagePair.prompt = newText;
+    const chatStartIndex = messageIndex * 2;         // first relevant history entry
+    chatHistory.splice(chatStartIndex);              // trim history here and beyond
+
+    // ── 4. Regenerate AI response ──────────────────────────────────────
+    await runEditedQuery(newText, messageIndex);
+  });
+
+  // Cancel button — uses existing .notebook-btn styling
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'notebook-btn';
+  cancelBtn.title = 'Cancel (Escape)';
+  cancelBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg> Cancel`;
+  cancelBtn.addEventListener('click', () => cancelInlineEdit(messageIndex));
+
+  // Keyboard shortcuts: Escape = cancel, Ctrl+Enter = send
+  textarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      cancelInlineEdit(messageIndex);
+    } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      sendBtn.click();
+    }
+  });
+
+  actions.appendChild(sendBtn);
+  actions.appendChild(cancelBtn);
+
+  bubble.appendChild(textarea);
+  bubble.appendChild(actions);
+
+  // Auto-resize + focus
+  requestAnimationFrame(() => {
+    resizeTA();
+    textarea.focus();
+    textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
+  });
+}
+
+
+// ======================================================
+// REGENERATE QUERY AFTER EDIT
+// ======================================================
+
+/**
+ * Called by editMessage Send — sends the updated prompt to the AI and
+ * appends a fresh assistant bubble at the correct position.
+ *
+ * @param {string}  prompt        The updated user message text
+ * @param {number}  messageIndex  Index in messagePairs for this message
+ */
+async function runEditedQuery(prompt, messageIndex) {
+  const contentArea = document.getElementById('ai-content-area');
+  const tray        = document.getElementById('ai-response-tray');
+  if (!contentArea) return;
+
+  // Collect notebook context
+  const cells = Array.from(document.querySelectorAll('.code-editor, .text-editor'))
+    .map(el => (el.value !== undefined ? el.value : el.innerHTML));
+
+  let activeVars = [];
+  if (pyodide) {
+    try {
+      const keys = pyodide.runPython('list(userns.keys())').toJs();
+      activeVars = keys.filter(k => !k.startsWith('_') && !['pd','np','plt','querydb'].includes(k));
+    } catch (_) {}
   }
-  
-  // Remove from chat history
-  // Each message pair = 2 entries in chatHistory (user + assistant)
-  // So if we're editing message at index 2, we need to remove from chatHistory[4] onwards
-  const chatStartIndex = messageIndex * 2;
-  if (chatStartIndex < chatHistory.length) {
-    chatHistory.splice(chatStartIndex);
+
+  // Timer
+  const startTime = Date.now();
+  const timerEl   = document.createElement('span');
+  timerEl.style.cssText = "margin-left:auto;font-family:'Fira Code', monospace;font-size:0.85rem;color:#64748b;";
+  timerEl.innerText = '0.0s';
+
+  // ── Assistant placeholder bubble ──────────────────────────────────────
+  const assistantBubble = document.createElement('div');
+  assistantBubble.className = 'ai-msg assistant';
+  assistantBubble.style.padding     = '12px 10px 12px 16px'; // Reduced
+  assistantBubble.style.background  = '#ffffff';
+  assistantBubble.style.border      = '1px solid #e6edf3';
+  assistantBubble.style.borderRadius= '10px';
+  assistantBubble.style.margin      = '6px 0'; // Tighter
+  assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><span class="pulse-icon"></span><strong>Assistant</strong></div><div style="margin-top:8px;color:#64748b;">Generating response... </div>`;
+  assistantBubble.querySelector('div').appendChild(timerEl);
+  contentArea.appendChild(assistantBubble);
+
+  // Update messagePairs entry (index already trimmed to messageIndex)
+  messagePairs[messageIndex].assistantBubble = assistantBubble;
+
+  if (tray) tray.scrollTop = tray.scrollHeight;
+
+  const timerInt = setInterval(() => {
+    timerEl.innerText = ((Date.now() - startTime) / 1000).toFixed(1) + 's';
+  }, 100);
+
+  setAILoading(true);
+  currentAbortController = new AbortController();
+
+  try {
+    const resp = await fetch('query', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt,
+        notebook_cells: cells,
+        variables:      activeVars,
+        chat_history:   chatHistory   // already trimmed to pre-edit point
+      }),
+      signal: currentAbortController.signal,
+    });
+
+    if (!resp.ok) throw new Error('Server Error');
+
+    const data       = await resp.json();
+    clearInterval(timerInt);
+    const totalTime  = ((Date.now() - startTime) / 1000).toFixed(2);
+    const toolUsed   = data.tool_used || '';
+    let   answer     = data.answer    || '';
+
+    // Title: set once from FIRST user message only.
+    if (currentChatId && typeof updateChatTitleFromFirstUserMessage === 'function') {
+      updateChatTitleFromFirstUserMessage(currentChatId, prompt);
+    }
+
+    // Persist to chatHistory
+    chatHistory.push({ role: 'user',      content: prompt });
+    chatHistory.push({ role: 'assistant', content: answer });
+
+    // Code block handling (mirrors runAIQuery)
+    let codeNode = null;
+    const originalAnswer    = answer;
+    const isGenerateIntent  = toolUsed.toUpperCase().includes('GENERATE');
+    const codeMatch         = originalAnswer.match(/```python([\s\S]*?)```/);
+
+    if (codeMatch && isGenerateIntent) {
+      const code = codeMatch[1].trim();
+      if (!showCode) {
+        answer   = stripCodeBlocks(originalAnswer);
+        codeNode = null;
+      } else {
+        answer = originalAnswer.replace(codeMatch[0], '').trim();
+        codeNode = stageCodeProposalUI(code, prompt);
+      }
+    } else if (codeMatch && !isGenerateIntent) {
+      answer   = stripCodeBlocks(originalAnswer);
+      codeNode = null;
+    } else {
+      if (!showCode) answer = stripCodeBlocks(answer);
+    }
+
+    // Render final assistant bubble
+    assistantBubble.innerHTML = '';
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px'; // Tighter
+    const titleEl = document.createElement('strong');
+    titleEl.innerText = 'Assistant';
+    const timeLabel = document.createElement('span');
+    timeLabel.style.cssText = 'color:#888;font-size:0.7rem'; // Smaller
+    timeLabel.innerText = `Took ${totalTime}s`;
+    header.appendChild(titleEl);
+    header.appendChild(timeLabel);
+
+    const body = document.createElement('div');
+    body.style.cssText = 'font-size:0.88rem;line-height:1.5'; // Shrunk from 0.95rem (~14px)
+    if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
+      body.innerHTML = DOMPurify.sanitize(marked.parse(answer || ''));
+    } else {
+      body.innerText = answer;
+    }
+
+    assistantBubble.appendChild(header);
+    assistantBubble.appendChild(body);
+    if (codeNode) assistantBubble.appendChild(codeNode);
+
+    if (tray) tray.scrollTop = tray.scrollHeight;
+
+  } catch (e) {
+    clearInterval(timerInt);
+    if (e.name === 'AbortError') {
+      assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><strong>Assistant</strong></div><div style="margin-top:8px;color:#94a3b8;font-style:italic;">Response cancelled.</div>`;
+    } else {
+      assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><strong>Assistant</strong></div><div style="margin-top:8px;color:red;">Error: ${e.message}</div>`;
+    }
+  } finally {
+    currentAbortController = null;
+    setAILoading(false);
+        // Persist final state
+        if (!viewingHistoryItem) {
+            if (typeof saveCurrentChat === 'function') saveCurrentChat();
+            if (typeof saveChatsToLocalStorage === 'function') saveChatsToLocalStorage();
+        } else {
+            // If viewing a history item, persist the updated chat history back to its original notebook (best-effort)
+            if (viewingHistoryOriginalNotebook) {
+                try {
+                    await saveChatHistoryToNotebook(viewingHistoryOriginalNotebook, chatHistory);
+                } catch (e) {
+                    console.warn('Failed to persist history chat back to original notebook:', e);
+                }
+            }
+        }
   }
-  
-  // Remove from messagePairs array (from messageIndex onwards)
-  messagePairs.splice(messageIndex);
 }
 
 
@@ -1145,6 +1828,11 @@ async function runAIQuery() {
   const prompt = input.value.trim();
   if (!prompt && attachedFiles.length === 0) return;
 
+  // Safety: initialize a default chat if user sends before one exists.
+  if (!currentChatId && chats.length === 0 && typeof createNewChat === 'function') {
+    createNewChat();
+  }
+
   // Ensure popup is open
   if (mini) {
     mini.classList.add("open");
@@ -1182,10 +1870,10 @@ async function runAIQuery() {
     // Append user's message (float right, dynamic width up to 70% with word-wrap)
     const userBubble = document.createElement('div');
     userBubble.className = 'ai-msg user';
-    userBubble.style.padding = '16px 10px 10px 10px';
+    userBubble.style.padding = '10px 12px'; // Shrunk padding
     userBubble.style.background = '#eef2ff';
     userBubble.style.borderRadius = '10px';
-    userBubble.style.margin = '8px 0 8px auto'; // margin-left auto pushes right
+    userBubble.style.margin = '12px 0 12px auto'; // Tightened vertical margins
     userBubble.style.width = 'fit-content'; // shrink to content
     userBubble.style.maxWidth = '70%'; // but max 70% of container
     userBubble.style.wordWrap = 'break-word';
@@ -1202,11 +1890,11 @@ async function runAIQuery() {
     // Assistant placeholder
     const assistantBubble = document.createElement('div');
     assistantBubble.className = 'ai-msg assistant';
-    assistantBubble.style.padding = '16px 10px 10px 20px';
+    assistantBubble.style.padding = '12px 10px 12px 16px'; // Reduced padding
     assistantBubble.style.background = '#ffffff';
     assistantBubble.style.border = '1px solid #e6edf3';
     assistantBubble.style.borderRadius = '10px';
-    assistantBubble.style.margin = '8px 0';
+    assistantBubble.style.margin = '6px 0'; // Tightened vertical margins
     assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><span class="pulse-icon"></span><strong>Assistant</strong></div><div style="margin-top:8px;color:#64748b;">Generating response... </div>`;
     // add timer to the header
     assistantBubble.querySelector('div').appendChild(timerEl);
@@ -1253,66 +1941,35 @@ async function runAIQuery() {
 
         let answer = data.answer || "";
         
+        // Title: set once from FIRST user message only.
+        if (currentChatId && typeof updateChatTitleFromFirstUserMessage === 'function') {
+          updateChatTitleFromFirstUserMessage(currentChatId, prompt);
+        }
+
         // Update history
         chatHistory.push({ role: "user", content: prompt });
         chatHistory.push({ role: "assistant", content: answer });
-
-        // Update chat title from first AI response (only fires once — guard is in updateChatTitle)
-        if (currentChatId && typeof updateChatTitle === 'function') {
-          updateChatTitle(currentChatId, answer);
-        }
         
-        let codeHtml = "";
+        let codeNode = null;
         const originalAnswer = answer;
 
-        // Only show Add to Cell for GENERATE_CODE, not for EXPLAIN_CODE or other tools
+        // Show proposal controls only for generate intents with python code blocks
         const isGenerateIntent = toolUsed.toUpperCase().includes("GENERATE");
         
         const codeMatch = originalAnswer.match(/```python([\s\S]*?)```/);
         if (codeMatch && isGenerateIntent) {
-            // Only process code blocks if it's a GENERATE_CODE intent
             const code = codeMatch[1].trim();
             if (!showCode) {
-                // User chose to hide code: remove any fenced code blocks
                 answer = stripCodeBlocks(originalAnswer);
-                codeHtml = ""; // do not render add-to-cell
+                codeNode = null;
             } else {
-                // Show code: strip the python block from the visible answer and provide add-to-cell UI
                 answer = originalAnswer.replace(codeMatch[0], "").trim();
-
-                // Build code block element safely
-                const codeBlock = document.createElement('div');
-                codeBlock.style.marginTop = '10px';
-                codeBlock.style.padding = '10px';
-                codeBlock.style.background = '#e0f2fe';
-                codeBlock.style.borderRadius = '8px';
-                codeBlock.style.borderLeft = '4px solid #3b82f6';
-
-                const pre = document.createElement('pre');
-                pre.style.fontSize = '0.85rem';
-                pre.style.overflowX = 'auto';
-                const codeEl = document.createElement('code');
-                codeEl.textContent = code;
-                pre.appendChild(codeEl);
-
-                const btn = document.createElement('button');
-                btn.type = 'button';
-                btn.className = 'add-to-cell-btn';
-                btn.setAttribute('data-add-to-cell', '1');
-                btn.setAttribute('data-code', encodeURIComponent(code));
-                btn.style.cssText = 'background:#3b82f6;color:white;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;margin-top:8px';
-                btn.innerText = 'Add to Cell';
-
-                codeBlock.appendChild(pre);
-                codeBlock.appendChild(btn);
-                codeHtml = codeBlock; // DOM element
+                codeNode = stageCodeProposalUI(code, prompt);
             }
         } else if (codeMatch && !isGenerateIntent) {
-            // If it's EXPLAIN_CODE or other intent, strip code blocks but don't show Add to Cell
             answer = stripCodeBlocks(originalAnswer);
-            codeHtml = "";
+            codeNode = null;
         } else {
-            // No explicit python block found. If showCode is false, strip any code fences from answer.
             if (!showCode) answer = stripCodeBlocks(answer);
         }
 
@@ -1322,18 +1979,18 @@ async function runAIQuery() {
         header.style.display = 'flex';
         header.style.justifyContent = 'space-between';
         header.style.alignItems = 'center';
-        header.style.marginBottom = '8px';
+        header.style.marginBottom = '6px'; // Tighter
         const title = document.createElement('strong');
         title.innerText = 'Assistant';
         const timeLabel = document.createElement('span');
         timeLabel.style.color = '#888';
-        timeLabel.style.fontSize = '0.75rem';
+        timeLabel.style.fontSize = '0.7rem'; // Smaller
         timeLabel.innerText = `Took ${totalTime}s`;
         header.appendChild(title);
         header.appendChild(timeLabel);
 
         const body = document.createElement('div');
-        body.style.fontSize = '0.95rem';
+        body.style.fontSize = '0.88rem'; // Shrunk from 0.95rem
         body.style.lineHeight = '1.5';
         // Convert markdown to HTML if marked is available, and sanitize
         if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
@@ -1344,7 +2001,7 @@ async function runAIQuery() {
 
         assistantBubble.appendChild(header);
         assistantBubble.appendChild(body);
-        if (codeHtml) assistantBubble.appendChild(codeHtml);
+        if (codeNode) assistantBubble.appendChild(codeNode);
 
         if (tray) tray.scrollTop = tray.scrollHeight;
 
@@ -1478,14 +2135,16 @@ function initAIWidget() {
   };
 
   fab.addEventListener("click", () => {
-    // First FAB click on a new notebook with no chats: auto-create the first chat
+    // Initialize one default chat for this notebook on first FAB click only
+    // (based on actual chat count, not transient click state)
     if (chats.length === 0) {
-      const flagKey = `fab_first_click_${currentNotebookId}`;
-      if (!localStorage.getItem(flagKey)) {
-        localStorage.setItem(flagKey, '1');
-        createNewChat(); // opens popup and creates the first chat
-        return;
+      try {
+        localStorage.setItem(`chat_initialized_${currentNotebookId}`, '1');
+      } catch (e) {
+        console.warn('Failed to persist chat init flag:', e);
       }
+      createNewChat(); // opens popup and creates the first chat
+      return;
     }
     setOpen(!isOpen);
   });
@@ -1773,56 +2432,6 @@ function closeDrawer(drawerName) {
     }
 }
 
-function addGeneratedCodeToCell(encodedCode) {
-  const code = decodeURIComponent(encodedCode || "");
-
-  // Find the last code editor
-  const editors = document.querySelectorAll(".code-editor");
-  let targetEditor = null;
-
-  if (editors.length > 0) {
-    const lastEditor = editors[editors.length - 1];
-    let content = "";
-    
-    // Check content (CodeMirror or textarea)
-    if (lastEditor.nextSibling && lastEditor.nextSibling.classList && lastEditor.nextSibling.classList.contains('CodeMirror')) {
-      const cm = lastEditor.nextSibling.CodeMirror;
-      if (cm) content = cm.getValue();
-    } else {
-      content = lastEditor.value;
-    }
-
-    // If empty/whitespace only, reuse it
-    if (!content || content.trim() === "") {
-      targetEditor = lastEditor;
-    }
-  }
-
-  // If no reusable cell found, create a new one
-  if (!targetEditor) {
-    addCodeCell();
-    // Get the new last editor
-    const newEditors = document.querySelectorAll(".code-editor");
-    targetEditor = newEditors[newEditors.length - 1];
-  }
-
-  if (!targetEditor) return;
-
-  // Set the value
-  if (targetEditor.nextSibling && targetEditor.nextSibling.classList && targetEditor.nextSibling.classList.contains('CodeMirror')) {
-    const cm = targetEditor.nextSibling.CodeMirror;
-    if (cm) {
-      cm.setValue(code);
-      cm.focus();
-    }
-  } else {
-    targetEditor.value = code;
-    autoResize(targetEditor);
-    targetEditor.focus();
-  }
-}
-
-
 // --- 4. TABS & DB (Preserved) ---
 function switchTab(view) {
   const workspaceView = document.getElementById("workspace-view");
@@ -2038,24 +2647,15 @@ async function saveNotebook(prefillName) {
     // currentNotebookId = 'notebook_' + name; <--- move to success
 
     try {
+        const chatsSnapshot = JSON.parse(JSON.stringify(chats || []));
         const resp = await fetch('/api/notebooks/save', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 name,
                 cells,
-                chat_data: { currentChatId, chats: chatHistory } // Use global chatHistory or chats? Check variable usage.
-                // Original used "chats" but global variable is "chatHistory" usually? 
-                // Line 2020 used "chats" but I don't see "chats" defined in local scope. 
-                // Ah, saveCurrentChat() populates global `chatHistory`. 
-                // Let's check: script.js line 4: let chatHistory = [];
-                // So I should use chatHistory. 
-                // Wait, original code used "chats". Is "chats" defined elsewhere?
-                // Step 653 line 2020: `chat_data: { currentChatId, chats }`
-                // If "chats" is not defined, it would throw ReferenceError.
-                // Maybe "chats" is defined?
-                // Let's assume global `chatHistory` is the correct one.
-                // Or maybe local scope? No.
+                // Persist full multi-chat state per notebook (not flat chatHistory).
+                chat_data: { currentChatId, chats: chatsSnapshot }
             })
         });
 
@@ -2069,6 +2669,7 @@ async function saveNotebook(prefillName) {
         setNotebookTitle(name);
         currentNotebookName = name;
         currentNotebookId = 'notebook_' + name;
+        persistActiveNotebookId();
 
         saveChatsToLocalStorage();
 
@@ -2100,6 +2701,7 @@ function _doNewNotebook() {
     addCodeCell();
 
     currentNotebookId = 'notebook_' + Date.now();
+    persistActiveNotebookId();
     setNotebookTitle('Untitled Notebook');
     chats = [];
     currentChatId = null;
@@ -2107,7 +2709,6 @@ function _doNewNotebook() {
     messagePairs = [];
     document.getElementById('ai-content-area').innerHTML = '';
     renderChatList();
-    saveChatsToLocalStorage();
 
     // Reset dirty state for fresh notebook
     isDirty            = false;
@@ -2164,6 +2765,7 @@ async function openNotebook(name) {
     // Set notebook identity based on notebook name
     currentNotebookId   = 'notebook_' + name;
     currentNotebookName = name;  // prefill for future saves
+    persistActiveNotebookId();
     setNotebookTitle(name);
 
     // Extract cells (backward compatible with legacy array format)
@@ -2934,6 +3536,7 @@ async function finishRename(input, container, strong, isBlur) {
                 currentNotebookId = 'notebook_' + newName;
                 currentNotebookName = newName;
                 setNotebookTitle(newName);
+                persistActiveNotebookId();
             }
             return;
         }
@@ -2981,6 +3584,7 @@ async function finishRename(input, container, strong, isBlur) {
             currentNotebookId = 'notebook_' + newName;
             currentNotebookName = newName;
             setNotebookTitle(newName);
+            persistActiveNotebookId();
         }
 
     } catch (e) {
@@ -2996,31 +3600,36 @@ async function finishRename(input, container, strong, isBlur) {
 }
 
 // ── Restore a history item as a live chat session ─────────────────────────────
-function openHistoryInChat(item) {
+async function openHistoryInChat(item) {
     // Save current chat first
     if (currentChatId) saveCurrentChat();
 
-    // Build a real chat object so the conversation is live (user can continue it)
-    const restoredChat = {
-        id: 'history_' + item.id + '_' + Date.now(),
-        notebookId: currentNotebookId,
-        title: item.query.slice(0, 40) + (item.query.length > 40 ? '…' : ''),
-        messages: [{ prompt: item.query }],
-        chatHistory: [
-            { role: 'user',      content: item.query  },
-            { role: 'assistant', content: item.answer }
-        ],
-        createdAt: new Date(item.timestamp.replace(' ', 'T')).getTime() || Date.now()
-    };
+    // Set transient viewing state — do NOT attach this history chat to the current notebook
+    viewingHistoryItem = item;
+    viewingHistoryOriginalNotebook = null;
 
-    // Add to chats list and switch to it
-    chats.unshift(restoredChat);
-    currentChatId = restoredChat.id;
-    loadChatToUI(restoredChat.id);
-    renderChatList();
-    saveChatsToLocalStorage();
+    // Try to discover the original saved notebook (best-effort)
+    try {
+        viewingHistoryOriginalNotebook = await findNotebookForHistory(item);
+    } catch (e) {
+        console.warn('Failed to find original notebook for history item', e);
+    }
 
-    // Open popup maximized — drawer stays open (no closeDrawer call)
+    // Load the history conversation into the popup UI without adding it to `chats`
+    const restoredHistory = [
+        { role: 'user', content: item.query },
+        { role: 'assistant', content: item.answer }
+    ];
+
+    // Clear current UI and render history
+    clearChatUI();
+    chatHistory = JSON.parse(JSON.stringify(restoredHistory));
+    renderMessagesFromHistory();
+
+    // Mark there is no currentChatId for this transient view (so it won't be persisted to current notebook)
+    currentChatId = null;
+
+    // Ensure the popup is open + maximized per requirement
     if (!isPopupOpen() || !isPopupMaximized()) {
         openPopupMaximized();
     }
@@ -3101,6 +3710,93 @@ async function deleteSavedNotebook(event, name) {
     } catch (e) {
         console.error('Failed to delete notebook:', e);
     }
+}
+// Try to find the original saved notebook name for a history entry (best-effort).
+async function findNotebookForHistory(item) {
+    if (!item || !item.notebook) return null;
+    try {
+        const listResp = await fetch('/api/notebooks');
+        const notebooks = await listResp.json();
+        if (!Array.isArray(notebooks)) return null;
+
+        // Attempt to parse stored notebook context (history stores as stringified list)
+        let histArr = null;
+        try {
+            histArr = JSON.parse(item.notebook);
+        } catch (e) {
+            // Try converting single-quotes to double-quotes (python repr -> json)
+            try {
+                histArr = JSON.parse(item.notebook.replace(/'/g, '"'));
+            } catch (e2) {
+                histArr = null;
+            }
+        }
+
+        for (const nb of notebooks) {
+            try {
+                const resp = await fetch(`/api/notebooks/${encodeURIComponent(nb.display_name)}`);
+                const data = await resp.json();
+                if (!data || !data.cells) continue;
+
+                const cellTexts = data.cells.map(c => (c.source || c.content || '').toString()).filter(Boolean);
+
+                if (histArr && Array.isArray(histArr) && histArr.length > 0) {
+                    // If any history cell appears in notebook cells, treat as match
+                    let matches = 0;
+                    for (const h of histArr) {
+                        if (!h) continue;
+                        for (const ct of cellTexts) {
+                            if (!ct) continue;
+                            if (ct.includes(h) || h.includes(ct) || ct.includes(h.slice(0, Math.min(50, h.length)))) {
+                                matches++;
+                                break;
+                            }
+                        }
+                    }
+                    if (matches > 0) return nb.display_name;
+                } else {
+                    // Fallback: check if the query or answer text exists in notebook cells
+                    const joined = cellTexts.join('\n');
+                    if ((item.query && joined.includes(item.query)) || (item.answer && joined.includes(item.answer))) {
+                        return nb.display_name;
+                    }
+                }
+            } catch (e) {
+                continue;
+            }
+        }
+    } catch (e) {
+        console.warn('findNotebookForHistory failed', e);
+    }
+    return null;
+}
+
+// Save chat history back into a named saved notebook (POST /api/notebooks/save)
+async function saveChatHistoryToNotebook(notebookName, chatHistoryArr) {
+    if (!notebookName) throw new Error('Notebook name required');
+    const resp = await fetch(`/api/notebooks/${encodeURIComponent(notebookName)}`);
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+
+    const payload = {
+        name: notebookName,
+        cells: data.cells || [],
+        chat_data: data.chat_data || {},
+        chat_history: chatHistoryArr || []
+    };
+
+    const saveResp = await fetch('/api/notebooks/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+
+    if (!saveResp.ok) {
+        const txt = await saveResp.text();
+        throw new Error('Save failed: ' + txt);
+    }
+
+    return true;
 }
 //// Add this NEW function after loadSavedNotebooks()
 async function openSavedNotebook(notebookName) {

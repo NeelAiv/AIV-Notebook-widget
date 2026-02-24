@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <title>InsightEdge AI Notebook</title>
+    
     <link rel="stylesheet" href="/static/style.css">
     <script src="https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap%22
@@ -51,18 +51,104 @@
             </div>
 
             <div class="navbar-buttons">
-                <button class="notebook-btn" onclick="saveNotebook()">Save Notebook</button>
-                <button onclick="newNotebook()">New Notebook</button>
-                <button class="clear-btn" onclick="addCodeCell()">+ Code</button>
-                <button class="clear-btn" onclick="window.location.reload()">Reset Session</button>
-                <button class="keyboard-shortcuts-btn" onclick="window.shortcutsManager && window.shortcutsManager.showHelpModal()" title="Keyboard Shortcuts (Ctrl + ?)">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <circle cx="12" cy="12" r="10" />
-                        <path d="M12 16v-4" />
-                        <path d="M12 8h.01" />
-                    </svg>
-                    <span>Help</span>
-                </button>
+<button class="notebook-btn" onclick="saveNotebook()" 
+        style="display: inline-flex; align-items: center; gap: 6px; background: transparent; border: none; cursor: pointer;">
+
+  <svg xmlns="http://www.w3.org/2000/svg" 
+       width="12" 
+       height="12" 
+       viewBox="0 0 24 24" 
+       fill="none" 
+       stroke="currentColor" 
+       stroke-width="2" 
+       stroke-linecap="round" 
+       stroke-linejoin="round">
+    <path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/>
+    <path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/>
+    <path d="M7 3v4a1 1 0 0 0 1 1h7"/>
+  </svg>
+
+  Save
+</button>            <button class="notebook-btn" onclick="newNotebook()" 
+        style="display: inline-flex; align-items: center; gap: 6px; background: transparent; border: none; cursor: pointer;">
+
+  <svg xmlns="http://www.w3.org/2000/svg" 
+       width="12" 
+       height="12" 
+       viewBox="0 0 24 24" 
+       fill="none" 
+       stroke="currentColor" 
+       stroke-width="2" 
+       stroke-linecap="round" 
+       stroke-linejoin="round">
+    <path d="M11.35 22H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v5.35"/>
+    <path d="M14 2v5a1 1 0 0 0 1 1h5"/>
+    <path d="M14 19h6"/>
+    <path d="M17 16v6"/>
+  </svg>
+
+  New Notebook
+</button>
+
+<button class="notebook-btn" onclick="addCodeCell()" 
+        style="display: inline-flex; align-items: center; gap: 6px; background: transparent; border: none; cursor: pointer;">
+
+  <svg xmlns="http://www.w3.org/2000/svg" 
+       width="12" 
+       height="12" 
+       viewBox="0 0 24 24" 
+       fill="none" 
+       stroke="currentColor" 
+       stroke-width="2" 
+       stroke-linecap="round" 
+       stroke-linejoin="round">
+    <path d="M5 12h14"/>
+    <path d="M12 5v14"/>
+  </svg>
+
+  Code
+</button>
+
+<button class="notebook-btn" onclick="window.location.reload()" 
+        style="display: inline-flex; align-items: center; gap: 6px; background: transparent; border: none; cursor: pointer;">
+
+  <svg xmlns="http://www.w3.org/2000/svg" 
+       width="12" 
+       height="12" 
+       viewBox="0 0 24 24" 
+       fill="none" 
+       stroke="currentColor" 
+       stroke-width="2" 
+       stroke-linecap="round" 
+       stroke-linejoin="round">
+    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+    <path d="M3 3v5h5"/>
+  </svg>
+
+  Reset Session
+</button>
+
+<button class="notebook-btn" onclick="window.shortcutsManager && window.shortcutsManager.showHelpModal()" 
+        title="Keyboard Shortcuts (Ctrl + ?)"
+        style="display: inline-flex; align-items: center; gap: 6px; background: transparent; border: none; cursor: pointer;">
+
+  <svg xmlns="http://www.w3.org/2000/svg" 
+       width="12" 
+       height="12" 
+       viewBox="0 0 24 24" 
+       fill="none" 
+       stroke="currentColor" 
+       stroke-width="2" 
+       stroke-linecap="round" 
+       stroke-linejoin="round">
+    <circle cx="12" cy="12" r="10"/>
+    <path d="M12 16v-4"/>
+    <path d="M12 8h.01"/>
+  </svg>
+
+  Help
+</button>
+
             </div>
         </div>
     </nav>
@@ -250,7 +336,7 @@
     <div id="ai-widget">
         <!-- FAB Trigger -->
         <button id="ai-fab" class="ai-fab" type="button" aria-label="Open AI Assistant">
-            <img src="static/digitalization.gif" alt="AI Assistant" class="ai-fab-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-sparkles-icon lucide-sparkles"><path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/><path d="M20 2v4"/><path d="M22 4h-4"/><circle cx="4" cy="20" r="2"/></svg>
         </button>
 
         <!-- Mini Chat Popup -->
