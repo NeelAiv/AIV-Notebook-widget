@@ -1,127 +1,18 @@
-/* ======================================================
-   MODERN DESIGN SYSTEM - InsightEdge AI Notebook
-   Enhanced UI/UX while maintaining all functionality
-====================================================== */
-
-/* ======================================================
-   CSS CUSTOM PROPERTIES (Design Tokens)
-====================================================== */
-:root {
-    /* Light Mode Colors */
-    --bg-primary: #ffffff;
-    --bg-secondary: #f8fafc;
-    --bg-tertiary: #f1f5f9;
-    --bg-hover: #f8fafc;
-
-    --text-primary: #0f172a;
-    --text-secondary: #475569;
-    --text-tertiary: #64748b;
-    --text-inverse: #ffffff;
-
-    --accent-primary: #3b82f6;
-    --accent-hover: #2563eb;
-    --accent-light: #dbeafe;
-    --accent-lighter: #eff6ff;
-
-    --success: #10b981;
-    --warning: #f59e0b;
-    --error: #ef4444;
-
-    --border-light: #f1f5f9;
-    --border-medium: #e2e8f0;
-    --border-strong: #cbd5e1;
-
-    --sidebar-bg: #0f172a;
-    --sidebar-border: #1e293b;
-    --sidebar-text: #e2e8f0;
-    --sidebar-text-muted: #94a3b8;
-    --sidebar-hover: rgba(255, 255, 255, 0.08);
-    --sidebar-active: rgba(59, 130, 246, 0.15);
-
-    --shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-    --shadow-sm: 0 2px 4px 0 rgba(0, 0, 0, 0.08);
-    --shadow-md: 0 4px 12px 0 rgba(0, 0, 0, 0.1);
-    --shadow-lg: 0 10px 24px 0 rgba(0, 0, 0, 0.12);
-    --shadow-xl: 0 20px 40px 0 rgba(0, 0, 0, 0.15);
-
-    --radius-xs: 6px;
-    --radius-sm: 8px;
-    --radius-md: 12px;
-    --radius-lg: 16px;
-    --radius-xl: 24px;
-    --radius-full: 9999px;
-
-    --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
-    --transition-base: 250ms cubic-bezier(0.4, 0, 0.2, 1);
-    --transition-slow: 350ms cubic-bezier(0.4, 0, 0.2, 1);
-
-    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    --font-mono: 'Fira Code', 'SF Mono', Monaco, 'Cascadia Code', monospace;
-
-    --navbar-height: 60px;
-    --sidebar-width: 200px;
-}
-
-/* Dark Mode */
-[data-theme="dark"] {
-    --bg-primary: #0f172a;
-    --bg-secondary: #1e293b;
-    --bg-tertiary: #334155;
-    --bg-hover: #1e293b;
-
-    --text-primary: #f1f5f9;
-    --text-secondary: #cbd5e1;
-    --text-tertiary: #94a3b8;
-
-    --border-light: #1e293b;
-    --border-medium: #334155;
-    --border-strong: #475569;
-
-    --sidebar-bg: #020617;
-    --sidebar-border: #0f172a;
-}
-
-/* ======================================================
-   GLOBAL RESET & BASE STYLES
-====================================================== */
-*,
-*::before,
-*::after {
-    box-sizing: border-box;
-    margin: 0;
-    padding: 0;
-}
-
-html {
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    text-rendering: optimizeLegibility;
-}
-
-html,
-body {
-    height: 100%;
-    font-family: var(--font-sans);
-    background: var(--bg-secondary);
-    color: var(--text-primary);
-    overflow: hidden;
-    font-size: 14px;
-    line-height: 1.6;
-}
-
-/* ======================================================
-   LOADING SCREEN
-====================================================== */
+/* Loading Screen */
 .loading-screen {
     position: fixed;
-    inset: 0;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: #ffffff;
     display: flex;
     justify-content: center;
     align-items: center;
     z-index: 9999;
     opacity: 1;
-    transition: opacity 0.4s ease-out;
+    transition: opacity 0.3s ease-out;
+    pointer-events: auto;
 }
 
 .loading-screen.hidden {
@@ -131,33 +22,174 @@ body {
 
 .loading-content {
     display: flex;
-    flex-direction: column;
+    justify-content: center;
     align-items: center;
-    gap: 24px;
 }
 
 .loading-gif {
-    max-width: 200px;
-    max-height: 200px;
-    filter: drop-shadow(0 10px 30px rgba(0, 0, 0, 0.3));
+    max-width: 250px;
+    max-height: 250px;
+    width: auto;
+    height: auto;
+}
+
+/* Chat rename controls */
+.chat-title-container {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+}
+
+.chat-edit-btn {
+    background: transparent;
+    border: none;
+    padding: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--text-secondary);
+    opacity: 0;
+    transition: opacity 0.2s, color 0.2s;
+    flex-shrink: 0;
+}
+
+.chat-list-item:hover .chat-edit-btn {
+    opacity: 1;
+}
+
+.chat-edit-btn:hover {
+    color: var(--accent);
+}
+
+.chat-edit-btn svg {
+    width: 16px;
+    height: 16px;
+    stroke: currentColor;
+}
+
+.chat-title.editing input,
+.chat-title-input {
+    font-size: 0.95rem;
+    padding: 4px 6px;
+    border-radius: 6px;
+    border: 1px solid #d1d5db;
+    outline: none;
+    min-width: 120px;
+}
+
+/* Colab-like code cell input styling */
+.colab-style {
+    border: 1.5px solid #c3c3c3;
+    border-radius: 8px;
+    box-shadow: 0 2px 6px rgba(60, 64, 67, 0.08);
+    background: #fff;
+    margin-bottom: 8px;
+}
+
+.colab-input-area {
+    position: relative;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+}
+
+.colab-editor {
+    width: 100%;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-family: 'Fira Code', monospace;
+    font-size: 1rem;
+    line-height: 1.6;
+    color: #222;
+    padding: 8px 0 8px 0;
+    resize: none;
+    min-height: 36px;
+    z-index: 2;
+}
+
+.colab-placeholder-text {
+    position: absolute;
+    left: 12px;
+    top: 8px;
+    color: #888;
+    font-size: 1rem;
+    pointer-events: none;
+    z-index: 1;
+    transition: opacity 0.2s;
+}
+
+.colab-placeholder-text a {
+    color: #3b82f6;
+    text-decoration: underline;
+    cursor: pointer;
+    pointer-events: auto;
 }
 
 /* ======================================================
-   NAVBAR (Fixed Top)
+   DESIGN SYSTEM
+====================================================== */
+:root {
+    --bg-main: #f9fafb;
+    --bg-surface: #ffffff;
+    --bg-muted: #f1f5f9;
+
+    --sidebar-bg: #020617;
+    --sidebar-border: #1e293b;
+    --sidebar-text: #cbd5e1;
+    --sidebar-text-muted: #64748b;
+
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+
+    --accent: #2563eb;
+    --accent-soft: #e0e7ff;
+
+    --border: #e5e7eb;
+
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+
+    --shadow-xs: 0 1px 1px rgba(0, 0, 0, 0.04);
+    --shadow-sm: 0 4px 12px rgba(15, 23, 42, 0.06);
+    --shadow-md: 0 10px 30px rgba(15, 23, 42, 0.10);
+}
+
+/* ======================================================
+   GLOBAL RESET
+====================================================== */
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    height: 100%;
+    margin: 0;
+    font-family: 'Inter', system-ui, sans-serif;
+    background: var(--bg-main);
+    color: var(--text-primary);
+    overflow: hidden;
+}
+
+/* ======================================================
+   NAVBAR (FIXED TOP)
 ====================================================== */
 .navbar {
     position: fixed;
     top: 0;
     left: 0;
     right: 0;
-    height: var(--navbar-height);
-    background: var(--bg-primary);
-    border-bottom: 1px solid var(--border-medium);
+    height: 56px;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
     z-index: 100;
     display: flex;
     align-items: center;
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
 }
 
 .navbar-content {
@@ -165,34 +197,33 @@ body {
     width: 100%;
     align-items: center;
     justify-content: space-between;
-    padding: 0 20px;
-    gap: 20px;
+    padding: 0 8px;
 }
 
 .navbar-logo {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     font-size: 1.1rem;
-    font-weight: 700;
+    font-weight: 600;
     color: var(--text-primary);
-    letter-spacing: -0.02em;
-}
-
-.navbar-logo img {
-    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
 }
 
 .navbar-title {
-    letter-spacing: -0.01em;
+    letter-spacing: 0.5px;
 }
 
-/* Centered Notebook Title */
+
+/* ---- Centered Notebook Title ---- */
+.navbar-content {
+    position: relative;
+}
+
 .navbar-notebook-title {
     position: absolute;
     left: 50%;
     transform: translateX(-50%);
-    max-width: 280px;
+    max-width: 240px;
     overflow: hidden;
     pointer-events: none;
 }
@@ -203,16 +234,24 @@ body {
 }
 
 .navbar-nb-text {
+    font-family: 'Inter', sans-serif;
     font-size: 0.95rem;
-    font-weight: 500;
-    color: var(--text-secondary);
+    font-weight: 400;
+    letter-spacing: 0.03em;
+    color: var(--text-primary);
     white-space: nowrap;
     display: inline-block;
 }
 
+/* Continuous ticker: two copies side-by-side, animate the pair -50% */
 @keyframes nb-marquee {
-    from { transform: translateX(0); }
-    to { transform: translateX(-50%); }
+    from {
+        transform: translateX(0);
+    }
+
+    to {
+        transform: translateX(-50%);
+    }
 }
 
 .navbar-nb-scroll-wrap.marquee-active {
@@ -223,82 +262,46 @@ body {
     animation-play-state: paused;
 }
 
-/* Navbar Buttons */
 .navbar-buttons {
     display: flex;
-    gap: 8px;
+    gap: 12px;
 }
 
 .navbar-buttons button {
-    padding: 8px 16px;
+    padding: 6px 12px;
     border-radius: var(--radius-sm);
-    border: 1px solid var(--border-medium);
-    background: var(--bg-primary);
-    color: var(--text-primary);
-    font-size: 0.875rem;
-    font-weight: 500;
+    border: 1px solid var(--border);
+    background: white;
+    font-size: 0.8rem;
     cursor: pointer;
-    transition: all var(--transition-fast);
-    white-space: nowrap;
+    transition: all 0.2s ease;
 }
 
 .navbar-buttons button:hover {
-    background: var(--bg-hover);
-    border-color: var(--accent-primary);
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-sm);
-}
-
-.navbar-buttons button:active {
-    transform: translateY(0);
-}
-
-.notebook-btn {
-    background: var(--accent-primary) !important;
-    color: var(--text-inverse) !important;
-    border-color: var(--accent-primary) !important;
-}
-
-.notebook-btn:hover {
-    background: var(--accent-hover) !important;
-}
-
-.clear-btn {
-    color: var(--text-secondary);
-}
-
-.keyboard-shortcuts-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.keyboard-shortcuts-btn svg {
-    width: 16px;
-    height: 16px;
+    background: var(--bg-muted);
 }
 
 /* ======================================================
-   APP LAYOUT
+   APP LAYOUT (CONTENT AREA BELOW NAVBAR)
 ====================================================== */
 .app-layout {
     display: flex;
     position: fixed;
-    top: var(--navbar-height);
+    top: 56px;
     left: 0;
     right: 0;
     bottom: 0;
-    height: calc(100vh - var(--navbar-height));
+    height: calc(100vh - 56px);
 }
 
 /* ======================================================
-   SIDEBAR (Fixed Left)
+   SIDEBAR (FIXED LEFT UNDER NAVBAR)
 ====================================================== */
 .sidebar {
-    width: var(--sidebar-width);
+    width: 192px;
     background: var(--sidebar-bg);
     border-right: 1px solid var(--sidebar-border);
-    padding: 24px 12px;
+    padding: 20px 16px;
     display: flex;
     flex-direction: column;
     overflow-y: auto;
@@ -306,93 +309,74 @@ body {
     z-index: 90;
 }
 
+/* Sidebar Navigation */
 .sidebar-nav {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    margin-bottom: 32px;
+    gap: 8px;
+    margin-bottom: 24px;
 }
 
 .nav-item {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 12px 16px;
+    padding: 10px 12px;
     border-radius: var(--radius-sm);
-    font-size: 0.875rem;
-    font-weight: 500;
+    font-size: 0.9rem;
     cursor: pointer;
     color: var(--sidebar-text-muted);
-    transition: all var(--transition-fast);
-    position: relative;
+    transition: all 0.2s ease;
+    white-space: nowrap;
 }
 
 .nav-item svg {
-    width: 20px;
-    height: 20px;
     flex-shrink: 0;
+    stroke: currentColor;
+}
+
+.nav-label {
+    display: block;
 }
 
 .nav-item:hover {
-    background: var(--sidebar-hover);
+    background: rgba(255, 255, 255, 0.05);
     color: var(--sidebar-text);
 }
 
 .nav-item.active {
-    background: var(--sidebar-active);
-    color: var(--text-inverse);
-}
-
-.nav-item.active::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 3px;
-    height: 60%;
-    background: var(--accent-primary);
-    border-radius: 0 2px 2px 0;
+    background: rgba(37, 99, 235, 0.18);
+    color: #ffffff;
 }
 
 .sidebar-section {
-    margin-top: 32px;
-    padding-top: 24px;
+    margin-top: 34px;
+    padding-top: 22px;
     border-top: 1px solid var(--sidebar-border);
 }
 
 .section-title {
-    font-size: 0.75rem;
-    font-weight: 600;
-    letter-spacing: 0.05em;
+    font-size: 0.65rem;
+    letter-spacing: 1.2px;
     text-transform: uppercase;
     color: var(--sidebar-text-muted);
-    margin-bottom: 12px;
-    padding: 0 16px;
+    margin-bottom: 14px;
 }
 
-.status-box {
-    margin-top: auto;
-    padding-top: 20px;
-    border-top: 1px solid var(--sidebar-border);
-    font-size: 0.75rem;
-    color: var(--sidebar-text-muted);
-    padding-left: 16px;
+.add-conn-btn {
+    width: 100%;
+    background: transparent;
+    border: 1px dashed #334155;
+    color: #1e293b;
+    padding: 9px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+
+.conn-form {
     display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-#status-dot {
-    color: var(--success);
-    font-size: 1.2rem;
-    line-height: 1;
-    animation: pulse 2s ease-in-out infinite;
-}
-
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
+    flex-direction: column;
+    margin-top: 10px;
 }
 
 /* ======================================================
@@ -400,24 +384,24 @@ body {
 ====================================================== */
 .drawers-container {
     position: relative;
+    flex-wrap: nowrap;
     width: 0;
     flex-shrink: 0;
 }
 
 .drawer {
     position: fixed;
-    top: var(--navbar-height);
-    left: var(--sidebar-width);
-    width: 340px;
-    height: calc(100vh - var(--navbar-height));
-    background: var(--bg-primary);
-    border-right: 1px solid var(--border-medium);
+    top: 56px;
+    left: 192px;
+    width: 320px;
+    height: calc(100vh - 56px);
+    background: var(--bg-surface);
+    border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
     transform: translateX(-100%);
-    transition: transform var(--transition-base);
+    transition: transform 240ms ease-out;
     z-index: 80;
-    box-shadow: var(--shadow-lg);
 }
 
 .drawer.open {
@@ -428,13 +412,13 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 20px 24px;
-    border-bottom: 1px solid var(--border-medium);
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
 }
 
 .drawer-header h3 {
-    font-size: 1rem;
+    font-size: 0.95rem;
     font-weight: 600;
     margin: 0;
     color: var(--text-primary);
@@ -444,44 +428,111 @@ body {
     background: transparent;
     border: none;
     cursor: pointer;
-    color: var(--text-tertiary);
-    padding: 6px;
+    color: var(--text-secondary);
+    padding: 4px;
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: var(--radius-xs);
-    transition: all var(--transition-fast);
+    transition: color 0.2s ease;
 }
 
 .drawer-close:hover {
-    background: var(--bg-hover);
-    color: var(--accent-primary);
+    color: var(--accent);
 }
 
 .drawer-content {
     flex: 1;
     overflow-y: auto;
-    padding: 20px 24px;
+    padding: 16px 20px;
 }
+
+.conn-form input {
+    margin-bottom: 8px;
+    padding: 8px 9px;
+    border-radius: var(--radius-sm);
+    border: none;
+    font-size: 0.8rem;
+}
+
+.conn-form button {
+    padding: 9px;
+    border-radius: var(--radius-sm);
+    border: none;
+    background: var(--accent);
+    color: white;
+    cursor: pointer;
+}
+
+.status-box {
+    margin-top: auto;
+    padding-top: 18px;
+    border-top: 1px solid var(--sidebar-border);
+    font-size: 0.75rem;
+    color: var(--sidebar-text-muted);
+}
+
+/* ===============================
+   DB CONNECTION LIST FIX
+================================ */
+
+.conn-item {
+    padding: 10px 12px;
+    margin-bottom: 6px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    color: #cbd5e1;
+    /* ðŸ‘ˆ VISIBLE TEXT */
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: background 0.2s ease, color 0.2s ease;
+}
+
+.conn-item:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #ffffff;
+}
+
+.conn-item.active {
+    background: rgba(37, 99, 235, 0.25);
+    color: #ffffff;
+    font-weight: 500;
+}
+
 
 /* ======================================================
    MAIN CONTENT
+   LAYOUT: Flexbox container with responsive margins
+   When AI panel is docked (maximized), margin-right is adjusted
+   to prevent content overlap and ensure full visibility.
+   CSS Custom Property --ai-panel-width synchronizes panel width
+   and content margin for consistent responsive behavior.
 ====================================================== */
 .content {
     flex: 1;
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    background: var(--bg-secondary);
-    transition: margin-left var(--transition-base), margin-right var(--transition-base);
+    background: var(--bg-main);
+    transition: margin-left 240ms ease-out, margin-right 300ms ease-in-out;
 }
 
+/* Push content right when drawer is open */
 .content.drawer-open {
-    margin-left: 340px;
+    margin-left: 320px;
+    /* 320px drawer width */
 }
 
+/* Push content left when AI panel is docked */
 .content.ai-docked {
-    margin-right: var(--ai-panel-width, 480px);
+    margin-right: var(--ai-panel-width, 450px);
+}
+
+/* When both drawer and AI are open */
+.content.drawer-open.ai-docked {
+    margin-left: 320px;
+    margin-right: var(--ai-panel-width, 450px);
 }
 
 /* ======================================================
@@ -490,212 +541,729 @@ body {
 .cell-container {
     flex: 1;
     width: 100%;
-    max-width: 1200px;
-    margin: 0 auto;
     overflow-y: auto;
     overflow-x: hidden;
-    padding: 32px 24px;
+    padding: 20px 20px 0 20px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 18px;
+    transition: padding 240ms ease-out;
 }
 
-/* ======================================================
-   ADD CELL BAR (Hover Reveal)
-====================================================== */
+/* Reduce padding when drawer is open so cells sit flush */
+.content.drawer-open .cell-container {
+    padding: 20px 20px;
+}
+
+/* ===============================
+   ADD CELL BAR (COLAB STYLE)
+================================ */
+
 .add-cell-bar {
     position: relative;
     display: flex;
+    /* This enables the layout engine */
+    flex-direction: row;
+    /* ðŸ”‘ STRICTLY forces buttons to be side-by-side */
     justify-content: center;
+    /* Centers them in the middle of the screen */
     align-items: center;
-    gap: 12px;
+    /* Aligns them vertically */
+    gap: 14px;
+    /* Adds the space between the two buttons */
     width: 100%;
-    margin: -8px 0;
-    padding: 12px 0;
+    /* Ensures the bar spans the full width */
+    margin: -18px 0;
+    /* Controls overlap */
+    padding: 10px 0;
+    /* Adds a little breathing room */
     opacity: 0;
-    transition: opacity var(--transition-fast);
+    /* Hides it until you hover (like the original) */
+    transition: opacity 0.2s ease-in-out;
     z-index: 10;
+    /* Ensures buttons sit on top of lines so they are clickable */
 }
 
-.code-cell:hover + .add-cell-bar,
+.code-cell:hover+.add-cell-bar,
 .add-cell-bar:hover {
     opacity: 1;
 }
 
 .add-cell-btn {
-    background: var(--bg-primary);
-    border: 1px solid var(--border-medium);
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
     color: var(--text-secondary);
-    padding: 8px 20px;
-    border-radius: var(--radius-full);
-    font-size: 0.875rem;
-    font-weight: 500;
+    padding: 6px 16px;
+    border-radius: 999px;
+    font-size: 0.85rem;
     cursor: pointer;
-    transition: all var(--transition-fast);
-    box-shadow: var(--shadow-sm);
+    transition: all 0.2s ease;
+    box-shadow: var(--shadow-xs);
 }
 
 .add-cell-btn:hover {
-    background: var(--accent-lighter);
-    border-color: var(--accent-primary);
-    color: var(--accent-primary);
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-md);
+    background: var(--bg-muted);
+    border-color: #c7d2fe;
+}
+
+.add-cell-btn.secondary {
+    color: var(--text-secondary);
 }
 
 /* ======================================================
-   CODE CELLS
+   CODE CELLS (COLAB-LIKE)
 ====================================================== */
 .code-cell {
     display: flex;
-    gap: 16px;
-    padding: 16px;
+    gap: 14px;
+    padding: 12px 14px;
     border-radius: var(--radius-md);
-    border: 2px solid var(--border-light);
-    background: var(--bg-primary);
-    transition: all var(--transition-fast);
+    border: 1px solid #e5e7eb;
+    transition: background 0.2s, box-shadow 0.2s;
     position: relative;
+    background: #ffffff;
+}
+
+/* allow side icons to render fully */
+.code-cell {
     overflow: visible;
 }
 
-.code-cell:hover {
-    border-color: var(--border-medium);
-    box-shadow: var(--shadow-md);
+.cell-controls button svg {
+    width: 18px;
+    height: 18px;
 }
+
 
 .code-cell:focus-within {
-    border-color: var(--accent-primary);
-    box-shadow: 0 0 0 3px var(--accent-lighter);
+    border-color: #2563eb;
 }
 
-.code-cell.active {
-    border-color: var(--accent-primary);
+.code-cell:hover {
+    background: var(--bg-surface);
+    box-shadow: var(--shadow-sm);
 }
 
 .cell-run-part {
-    width: 40px;
+    width: 36px;
     display: flex;
     justify-content: center;
-    padding-top: 8px;
-    flex-shrink: 0;
+    padding-top: 6px;
 }
 
 .play-btn {
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     border-radius: 50%;
-    border: 2px solid var(--border-strong);
-    background: var(--bg-primary);
-    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    background: white;
+    font-size: 0.75rem;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all var(--transition-fast);
 }
 
 .play-btn:hover {
-    border-color: var(--accent-primary);
-    color: var(--accent-primary);
-    background: var(--accent-lighter);
-    transform: scale(1.1);
+    border-color: var(--accent);
+    color: var(--accent);
 }
 
-.play-btn svg {
-    width: 16px;
-    height: 16px;
-}
-
+/* Loader icon animation */
 .play-btn .loader-icon {
     animation: spin 1s linear infinite;
 }
 
+/* Ensure SVG icons are properly sized and centered */
+.play-btn svg {
+    width: 16px;
+    height: 16px;
+    display: block;
+}
+
 @keyframes spin {
-    to { transform: rotate(360deg); }
+    from {
+        transform: rotate(0deg);
+    }
+
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 .cell-content-part {
     flex: 1;
     display: flex;
     flex-direction: column;
+    position: relative;
+    /* ðŸ”‘ NEW: This allows the box to shrink, forcing scrollbars instead of overflow */
     min-width: 0;
 }
 
-/* Code Editor */
 .code-editor {
     width: 100%;
     border: none;
     outline: none;
     background: transparent;
-    font-family: var(--font-mono);
-    font-size: 0.9rem;
+    border-radius: 6px;
+    font-family: 'Fira Code', monospace;
+    font-size: 14px;
     line-height: 1.6;
-    color: var(--text-primary);
+    min-height: 40px;
     padding: 8px 0;
     resize: none;
-    min-height: 40px;
+    overflow: hidden;
 }
+
+/* CodeMirror Integration */
+.CodeMirror {
+    background: transparent !important;
+    border: none !important;
+    font-family: 'Fira Code', monospace !important;
+    font-size: 14px !important;
+    line-height: 1.6 !important;
+    height: auto !important;
+    min-height: 40px !important;
+    color: #0f172a !important;
+}
+
+.CodeMirror-scroll {
+    overflow: hidden !important;
+}
+
+.CodeMirror-gutters {
+    background: transparent !important;
+    border-right: none !important;
+}
+
+.CodeMirror-linenumber {
+    color: transparent !important;
+}
+
+.CodeMirror-lines {
+    padding: 8px 0 !important;
+}
+
+.CodeMirror-line {
+    padding: 0 !important;
+}
+
 
 .code-placeholder {
     position: absolute;
-    top: 24px;
-    left: 72px;
-    color: var(--text-tertiary);
-    font-family: var(--font-mono);
-    font-size: 0.9rem;
+    top: 50%;
+    left: 8px;
+    transform: translateY(-50%);
+    color: #999;
     pointer-events: none;
-    opacity: 0.7;
+    font-size: 14px;
+    font-family: 'Fira Code', monospace;
+    line-height: 1.6;
+    opacity: 1;
+    transition: opacity 0.2s ease;
+    z-index: 1;
 }
 
-/* Cell Output */
+.code-placeholder u {
+    pointer-events: auto;
+    cursor: pointer;
+}
+
+
 .cell-output {
-    margin-top: 12px;
-    padding-top: 12px;
-    border-top: 2px solid var(--border-light);
-    font-family: var(--font-mono);
-    font-size: 0.875rem;
+    margin-top: 6px;
+    font-family: 'Fira Code', monospace;
+    font-size: 0.8rem;
     color: var(--text-secondary);
+    background: #ffffff;
+    padding: 1px;
+    border-top: 1.3px solid #d1d5db;
+    border-radius: 0;
+    /* ðŸ”‘ NEW: Handle overflow properly */
+    width: 100%;
     overflow-x: auto;
+    /* Scrollbar for wide tables */
+    word-wrap: break-word;
 }
 
+/* Hide output container when empty (separator appears only with content) */
 .cell-output:empty {
     display: none;
 }
 
 .cell-output pre {
     white-space: pre-wrap;
+    /* Forces text to wrap to the next line */
     word-break: break-word;
+    /* Breaks very long words/URLs */
     margin: 0;
-}
-
-.cell-output img {
     max-width: 100%;
-    border-radius: var(--radius-sm);
-    box-shadow: var(--shadow-sm);
-    margin-top: 8px;
 }
 
-/* Cell Controls */
+/* Text cell styles */
 .cell-controls {
-    position: absolute;
-    top: -14px;
-    right: 16px;
-    z-index: 20;
-    background: var(--bg-primary);
-    border: 1px solid var(--border-medium);
-    border-radius: var(--radius-full);
-    box-shadow: var(--shadow-sm);
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+/* enable clicks ONLY on active cell */
+.code-cell.active .cell-controls {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* --- THE ULTIMATE ICON FIX --- */
+.cell-controls button {
+    background: transparent;
+    border: none;
+    border-radius: 50%;
+
+    /* Increased size to 34px for better breathing room */
+    width: 34px !important;
+    height: 34px !important;
+
     display: flex;
     align-items: center;
-    gap: 4px;
+    justify-content: center;
+    cursor: pointer;
+
+    /* ðŸ”‘ KEY CHANGES BELOW */
+    overflow: visible !important;
+    /* Stops the "cutting" effect */
+    position: relative;
+    padding: 0 !important;
+    margin: 0 2px !important;
+    flex-shrink: 0;
+}
+
+/* Ensure the SVG itself doesn't have boundaries */
+.cell-controls button svg {
+    width: 20px !important;
+    height: 20px !important;
+    overflow: visible !important;
+    /* Let the stroke lines breathe */
+    stroke-width: 2px;
+    display: block;
+}
+
+.cell-controls button:hover {
+    background-color: #f1f5f9;
+}
+
+.text-toolbar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+}
+
+.text-toolbar button {
+    background: transparent;
+    border: 1px solid #ddd;
     padding: 4px 8px;
+    cursor: pointer;
+    font-size: 0.8rem;
+
+}
+
+.text-editor {
+    min-height: 40px;
+    padding: 8px;
+    border: none;
+    outline: none;
+    font-family: Inter, sans-serif;
+    font-size: 0.9rem;
+    line-height: 1.6;
+    color: var(--text-primary);
+    cursor: text;
+}
+
+.text-editor:empty::before {
+    content: attr(data-placeholder);
+    color: #999;
+}
+
+/* ======================================================
+   AI COMMAND BAR
+====================================================== */
+.input-area {
+    background: var(--bg-surface);
+    border-top: 1px solid var(--border);
+    padding: 18px 24px 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.search-container {
+    width: 100%;
+    max-width: 820px;
+    display: flex;
+    align-items: center;
+    /* âœ… hard center */
+    gap: 10px;
+    padding: 10px 14px;
+    border-radius: 26px;
+    border: 1px solid var(--border);
+    background: white;
+}
+
+/* Wrapper controls vertical centering */
+.prompt-input-wrapper {
+    flex: 1;
+    display: flex;
+    align-items: center;
+}
+
+/* Textarea baseline fix */
+#prompt-input {
+    width: 100%;
+    border: none;
+    outline: none;
+    resize: none;
+
+    font-size: 0.95rem;
+    line-height: 1.2;
+    /* ðŸ”‘ FIX */
+    padding: 4px 0;
+    /* ðŸ”‘ FIX */
+
+    background: transparent;
+    overflow-y: hidden;
+    min-height: 20px;
+
+    display: block;
+}
+
+.action-buttons button {
+    align-self: center;
+    /* ensures button never shifts */
+}
+
+
+
+.action-buttons {
+    display: flex;
+    gap: 8px;
+}
+
+button[id$="-btn"] {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    border: none;
+    cursor: pointer;
+    color: white;
+    background: var(--accent);
+}
+
+/* Minimize/Maximize Logic */
+.ai-tray {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    max-height: 600px;
+    background: var(--bg-muted);
+    border-radius: var(--radius-md);
+    margin-bottom: 14px;
+    display: flex;
+    flex-direction: column;
+    border-radius: 24px;
+}
+
+.ai-tray.minimized {
+    max-height: 40px;
+    opacity: 0.8;
+
+}
+
+.ai-tray.minimized #ai-content-area {
+    display: none;
+}
+
+.icon-btn-style {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    padding: 4px;
+    border-radius: 4px;
+}
+
+.icon-btn-style:hover {
+    background: rgba(0, 0, 0, 0.05);
+    color: var(--accent);
+}
+
+.ai-ans {
+    background: var(--bg-muted);
+    padding: 16px;
+    border-radius: var(--radius-md);
+    font-size: 0.9rem;
+    line-height: 1.6;
+}
+
+/* ======================================================
+   HISTORY
+====================================================== */
+.history-card {
+    background: white;
+    border-radius: var(--radius-md);
+    padding: 14px 30px 14px 14px;
+    box-shadow: var(--shadow-xs);
+    border-left: 3px solid var(--accent);
+    margin-bottom: 16px;
+    position: relative;
+}
+
+.history-card .delete-db-btn {
+    position: absolute;
+    top: auto;
+    bottom: 2px;
+    right: 2px;
     opacity: 0;
-    transition: opacity var(--transition-fast);
+    background: transparent;
+    border: none;
+    color: #ef4444;
+    cursor: pointer;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    transition: opacity 0.2s;
+    z-index: 2;
+}
+
+.history-card:hover .delete-db-btn {
+    opacity: 1;
+}
+
+.history-card .delete-db-btn:hover {
+    color: #dc2626;
+}
+
+#saved-list .history-card .delete-db-btn {
+    top: auto;
+    bottom: 2px;
+    right: 2px;
+}
+
+/* Rename Button (Pen) */
+.history-card .rename-db-btn {
+    position: absolute;
+    top: auto;
+    bottom: 2px;
+    right: 32px;
+    /* Left of delete button */
+    opacity: 0;
+    background: transparent;
+    border: none;
+    color: #cbd5e1;
+    /* Subtle default color */
+    cursor: pointer;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    transition: opacity 0.2s, color 0.15s;
+    z-index: 2;
+}
+
+.history-card:hover .rename-db-btn {
+    opacity: 1;
+}
+
+.history-card .rename-db-btn:hover {
+    color: #3b82f6;
+    /* Blue on hover */
+}
+
+/* Inline Rename Input */
+.rename-input {
+    font-size: 1rem;
+    /* Match existing strong tag */
+    font-weight: 600;
+    color: #1e293b;
+    border: 1px solid #3b82f6;
+    border-radius: 4px;
+    padding: 0 4px;
+    width: 180px;
+    outline: none;
+    background: #fff;
+    font-family: inherit;
+    margin: -1px;
+    /* Align with text position */
+}
+
+/* ==============================
+   QUILL TEXT CELL STYLING
+============================== */
+
+.text-cell {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    overflow: hidden;
+    background: white;
+}
+
+.text-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    background: #f8fafc;
+    border-bottom: 1px solid #e5e7eb;
+    border-radius: 6px;
+}
+
+.text-toolbar button {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 16px;
+}
+
+#quill-editor {
+    min-height: 80px;
+    padding: 12px;
+    font-size: 0.95rem;
+}
+
+.ql-editor {
+    padding: 0;
+}
+
+/* =====================
+   SVG ICON STYLING
+===================== */
+
+.text-toolbar button,
+.cell-controls button {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 4px;
+}
+
+.text-toolbar svg,
+.cell-controls svg {
+    width: 18px;
+    height: 18px;
+    stroke: #374151;
+}
+
+.text-toolbar button:hover svg,
+.cell-controls button:hover svg {
+    stroke: #2563eb;
+}
+
+.cell-controls {
+    opacity: 0;
+    pointer-events: none;
+    transition: 0.2s;
+}
+
+.code-cell.active .cell-controls {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.text-toolbar.hidden {
+    display: none;
+}
+
+.text-editor[contenteditable="false"] {
+    cursor: default;
+}
+
+/* FIX BUTTON INTERACTION */
+.cell-controls {
+    display: flex;
+    gap: 8px;
+}
+
+.cell-controls button {
+    background: transparent;
+    border: none;
+    padding: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* VERY IMPORTANT: allow svg to receive clicks */
+.cell-controls svg {
     pointer-events: none;
 }
 
-.code-cell:hover .cell-controls,
-.code-cell.active .cell-controls {
+/* Cursor feedback */
+.cell-controls button:hover {
+    background: #f1f5f9;
+    border-radius: 6px;
+}
+
+/* ======================================================
+   CODE & TEXT CELLS - CLIPPING FIX
+====================================================== */
+
+/* 1. Ensure Overflow is VISIBLE so controls don't get cut */
+.code-cell,
+.text-cell {
+    overflow: visible !important;
+    /* CRITICAL FIX */
+    position: relative;
+    border-radius: 8px;
+    background: white;
+}
+
+
+/* 2. TEXT CELL SPECIFIC - remove conflicting styles */
+.text-cell {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    overflow: visible;
+    /* Correct */
+    background: white;
+}
+
+
+/* ======================================================
+   CELL CONTROLS (The Floating Pill)
+====================================================== */
+
+.cell-controls {
+    position: absolute;
+    /* Adjust height to center on the top border line */
+    top: -16px;
+    right: 8px;
+    z-index: 20;
+    /* High z-index to float above borders/text */
+
+    /* Background & Borders to create the "Pill" effect */
+    background-color: #ffffff;
+    border: 1px solid #e5e7eb;
+    /* Subtle gray border */
+    border-radius: 20px;
+    /* Pill shape */
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+    /* Float shadow */
+
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+
+    /* Smooth reveal */
+    opacity: 0;
+    transition: opacity 0.2s ease-in-out;
+    pointer-events: none;
+}
+
+/* 3. ENSURE CONTROLS ARE CLICKABLE AND VISIBLE */
+.code-cell.active .cell-controls,
+.code-cell:hover .cell-controls {
     opacity: 1;
     pointer-events: auto;
 }
@@ -704,205 +1272,80 @@ body {
     background: transparent;
     border: none;
     border-radius: 50%;
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    /* Explicit button size */
+    height: 28px;
     padding: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--text-tertiary);
+    color: #5f6368;
     cursor: pointer;
-    transition: all var(--transition-fast);
 }
 
 .cell-controls button:hover {
-    background: var(--bg-hover);
-    color: var(--accent-primary);
+    background-color: #f1f5f9;
+    color: #1e293b;
 }
 
-.cell-controls button svg {
-    width: 18px;
-    height: 18px;
+/* ICON SIZING */
+.cell-controls svg {
+    width: 16px;
+    height: 16px;
+    stroke-width: 2px;
 }
 
-/* ======================================================
-   TEXT CELLS
-====================================================== */
-.text-cell {
-    display: flex;
-    flex-direction: column;
-    border: 2px solid var(--border-light);
-    border-radius: var(--radius-md);
-    background: var(--bg-primary);
-    overflow: visible;
-    transition: all var(--transition-fast);
-    position: relative;
-}
-
-.text-cell:hover {
-    border-color: var(--border-medium);
-    box-shadow: var(--shadow-md);
-}
-
-.text-cell:focus-within {
-    border-color: var(--accent-primary);
-    box-shadow: 0 0 0 3px var(--accent-lighter);
-}
-
-.text-toolbar {
+/* Fixed Logo Alignment */
+.logo {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 12px 16px;
-    background: var(--bg-tertiary);
-    border-bottom: 1px solid var(--border-medium);
-}
-
-.text-toolbar button {
-    background: transparent;
-    border: none;
-    padding: 6px;
-    cursor: pointer;
-    color: var(--text-secondary);
-    border-radius: var(--radius-xs);
-    transition: all var(--transition-fast);
-}
-
-.text-toolbar button:hover {
-    background: var(--bg-hover);
-    color: var(--accent-primary);
-}
-
-.text-toolbar button svg {
-    width: 18px;
-    height: 18px;
-}
-
-.text-toolbar.hidden {
-    display: none;
-}
-
-.text-editor {
-    min-height: 80px;
-    padding: 16px;
-    border: none;
-    outline: none;
-    font-size: 0.95rem;
-    line-height: 1.7;
-    color: var(--text-primary);
-}
-
-.text-editor:empty::before {
-    content: attr(data-placeholder);
-    color: var(--text-tertiary);
-    opacity: 0.7;
-}
-
-/* ======================================================
-   DATABASE CONNECTIONS
-====================================================== */
-.conn-form {
-    display: flex;
-    flex-direction: column;
+    justify-content: center;
+    /* Centers the whole group */
     gap: 12px;
-    margin-top: 16px;
-}
-
-.conn-form input {
-    padding: 12px 16px;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border-medium);
-    background: var(--bg-primary);
-    font-size: 0.875rem;
-    color: var(--text-primary);
-    transition: all var(--transition-fast);
-}
-
-.conn-form input:focus {
-    outline: none;
-    border-color: var(--accent-primary);
-    box-shadow: 0 0 0 3px var(--accent-lighter);
-}
-
-.conn-form button {
-    padding: 12px;
-    border-radius: var(--radius-sm);
-    border: none;
-    background: var(--accent-primary);
-    color: var(--text-inverse);
-    font-weight: 500;
-    cursor: pointer;
-    transition: all var(--transition-fast);
-}
-
-.conn-form button:hover {
-    background: var(--accent-hover);
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-md);
-}
-
-.add-conn-btn {
+    margin-bottom: 40px;
+    padding: 0px;
     width: 100%;
-    background: transparent;
-    border: 2px dashed var(--border-strong);
-    color: var(--text-secondary);
-    padding: 12px;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    font-weight: 500;
-    transition: all var(--transition-fast);
 }
 
-.add-conn-btn:hover {
-    border-color: var(--accent-primary);
-    color: var(--accent-primary);
-    background: var(--accent-lighter);
+.logo h2 {
+    margin: 0;
+    font-size: 1.3rem;
+    color: #ffffff;
+    letter-spacing: -0.5px;
 }
 
+/* Connection Item Delete Button */
 .conn-item {
-    padding: 12px 16px;
-    margin-bottom: 8px;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    color: var(--sidebar-text);
     display: flex;
     justify-content: space-between;
     align-items: center;
-    transition: all var(--transition-fast);
-    position: relative;
+    padding: 10px 12px;
+    border-radius: 8px;
+    margin-bottom: 4px;
+    cursor: pointer;
+    color: #1e293b;
+    transition: background 0.2s;
 }
 
 .conn-item:hover {
-    background: var(--sidebar-hover);
+    background: rgba(59, 130, 246, 0.08);
 }
 
 .conn-item.active {
-    background: var(--sidebar-active);
-    color: var(--text-inverse);
-}
-
-.conn-item.active::before {
-    content: '';
-    position: absolute;
-    left: -12px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 3px;
-    height: 60%;
-    background: var(--accent-primary);
-    border-radius: 0 2px 2px 0;
+    background: #3b82f6;
+    color: white;
 }
 
 .delete-db-btn {
     opacity: 0;
+    /* Hidden until hover */
     background: transparent;
     border: none;
-    color: var(--error);
+    color: #f87171;
     cursor: pointer;
-    padding: 4px;
     display: flex;
     align-items: center;
-    transition: all var(--transition-fast);
+    padding: 4px;
 }
 
 .conn-item:hover .delete-db-btn {
@@ -910,107 +1353,239 @@ body {
 }
 
 .delete-db-btn:hover {
-    transform: scale(1.1);
+    color: #ef4444;
 }
 
-.delete-db-btn svg {
-    pointer-events: none;
-}
-
-/* ======================================================
-   HISTORY & SAVED NOTEBOOKS
-====================================================== */
+/* History/Saved List Layout */
 .history-list {
     display: flex;
     flex-direction: column;
     gap: 12px;
 }
 
-.history-card {
-    background: var(--bg-primary);
-    border-radius: var(--radius-md);
-    padding: 16px 40px 16px 16px;
-    border: 2px solid var(--border-light);
-    border-left: 4px solid var(--accent-primary);
-    cursor: pointer;
-    transition: all var(--transition-fast);
+/* Centers logo and name */
+.logo {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 40px;
+}
+
+/* Fixes database connection items to show delete button */
+.conn-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     position: relative;
 }
 
-.history-card:hover {
-    border-color: var(--border-medium);
-    box-shadow: var(--shadow-md);
-    transform: translateX(4px);
-}
-
-.history-card.drawer-item--selected {
-    background: var(--accent-lighter);
-    border-color: var(--accent-primary);
-    box-shadow: 0 0 0 3px var(--accent-lighter);
-}
-
-.history-card strong {
-    color: var(--text-primary);
-    font-weight: 600;
-    display: block;
-    margin-bottom: 4px;
-}
-
-.history-card p {
-    color: var(--text-secondary);
-    font-size: 0.875rem;
-    margin: 0;
-}
-
-.history-card .delete-db-btn,
-.history-card .rename-db-btn {
-    position: absolute;
-    bottom: 8px;
+.delete-db-btn {
     opacity: 0;
     background: transparent;
     border: none;
+    color: #ef4444;
     cursor: pointer;
-    padding: 6px;
-    display: flex;
-    align-items: center;
-    transition: all var(--transition-fast);
-    z-index: 2;
+    transition: opacity 0.2s;
 }
 
-.history-card .delete-db-btn {
-    right: 8px;
-    color: var(--error);
-}
-
-.history-card .rename-db-btn {
-    right: 40px;
-    color: var(--text-tertiary);
-}
-
-.history-card:hover .delete-db-btn,
-.history-card:hover .rename-db-btn {
+.conn-item:hover .delete-db-btn {
     opacity: 1;
 }
 
-.history-card .rename-db-btn:hover {
-    color: var(--accent-primary);
+/* Saved List Styling */
+#saved-list {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
 }
 
-.rename-input {
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--text-primary);
-    border: 2px solid var(--accent-primary);
-    border-radius: var(--radius-xs);
-    padding: 4px 8px;
-    width: 200px;
-    outline: none;
-    background: var(--bg-primary);
+.history-card:hover {
+    background-color: #f1f5f9 !important;
+    transform: scale(1.01);
+    transition: all 0.2s;
+    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+}
+
+.delete-db-btn svg {
+    pointer-events: none;
+    /* This helps the click register on the button, not the icon */
 }
 
 /* ======================================================
-   AI WIDGET (Floating Assistant)
+   CUSTOM SCROLLBAR (Slim, No Arrows, Floating Pill)
 ====================================================== */
+
+/* 1. Set the width (Thickness) */
+::-webkit-scrollbar {
+    width: 10px;
+    /* Makes it slim (not huge like default) */
+    height: 8px;
+    /* For horizontal scrollbars */
+}
+
+/* 2. Hide the Track (Background) */
+::-webkit-scrollbar-track {
+    background: transparent;
+    margin-block: 4px;
+    /* distinct margin from edges */
+}
+
+/* 3. Style the Thumb (The moving part) */
+::-webkit-scrollbar-thumb {
+    background-color: #cbd5e1;
+    /* Grey color */
+    border-radius: 10px;
+    /* Makes it a perfect pill shape */
+    min-height: 50px;
+    /* Ensures it's at least 50px tall */
+}
+
+/* 4. Hover Effect */
+::-webkit-scrollbar-thumb:hover {
+    background-color: #94a3b8;
+    /* Darker on hover */
+}
+
+/* 5. REMOVE ARROWS / BUTTONS */
+::-webkit-scrollbar-button {
+    display: none;
+    width: 0;
+    height: 0;
+}
+
+/* 6. Remove the corner square where scrollbars meet */
+::-webkit-scrollbar-corner {
+    background: transparent;
+}
+
+/* ======================================================
+   AI TRAY (Transparent Wrapper)
+====================================================== */
+.ai-tray {
+    /* Remove the "Cell" look */
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    margin-bottom: 14px;
+
+    position: relative;
+    /* Anchor for the button */
+    display: flex;
+    flex-direction: column;
+    transition: all 0.3s ease;
+}
+
+/* Minimized state just hides the content, keeping structure minimal */
+.ai-tray.minimized #ai-content-area {
+    display: none;
+
+}
+
+/* ======================================================
+   THE BLUE TOGGLE BUTTON
+====================================================== */
+#tray-toggle-btn {
+    /* Floating position - Top Right of the Tray area */
+    position: absolute;
+    top: 8px;
+    right: 0;
+    z-index: 20;
+
+    /* Circle Styling */
+    width: 32px !important;
+    height: 32px !important;
+    background-color: #2563eb;
+    color: white;
+    border-radius: 50%;
+    border: none;
+    cursor: pointer;
+
+    /* Center the icon */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+
+    transition: transform 0.2s, background-color 0.2s;
+}
+
+#tray-toggle-btn:hover {
+    transform: scale(1.1);
+    background-color: #1d4ed8;
+}
+
+/* ======================================================
+   THE THINKING PILL (Centered & Floating)
+====================================================== */
+.ai-thinking-state {
+    /* Pill Shape */
+    width: 100%;
+    max-width: 600px;
+    /* Controlled width */
+    height: 48px;
+    margin: 0 auto;
+    /* Center horizontally */
+
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 50px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+
+    /* Layout */
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+
+    color: #475569;
+    font-size: 0.95rem;
+}
+
+/* Pulse Animation */
+.pulse-icon {
+    margin-right: 8px;
+    animation: pulse-fade 1.5s infinite;
+}
+
+@keyframes pulse-fade {
+    0% {
+        opacity: 0.6;
+    }
+
+    50% {
+        opacity: 1;
+    }
+
+    100% {
+        opacity: 0.6;
+    }
+}
+
+/* ======================================================
+   THE RESULT ANSWER (Needs its own box now)
+====================================================== */
+/* Since we removed the background from .ai-tray, we add it here for the result text */
+.ai-ans {
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 12px;
+    padding: 20px;
+    margin-top: 10px;
+    /* Space from the button */
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    font-size: 0.95rem;
+    line-height: 1.6;
+    color: #1e293b;
+}
+
+/* Safety: ensure old footer never shows */
+#footer-bar {
+    display: none !important;
+}
+
+/* Floating AI Widget */
 #ai-widget {
     position: fixed;
     inset: 0;
@@ -1018,91 +1593,109 @@ body {
     z-index: 1000;
 }
 
-/* FAB Button */
+/* FAB */
 .ai-fab {
     pointer-events: auto;
     position: fixed;
+
+    /* CENTER */
     left: 50%;
-    bottom: 24px;
+    right: auto;
+    bottom: 20px;
     transform: translateX(-50%);
-    width: 64px;
-    height: 64px;
-    border-radius: 50%;
-    border: none;
-    background: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-hover) 100%);
-    color: var(--text-inverse);
-    box-shadow: var(--shadow-xl);
+
+    width: 52px;
+    height: 52px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: #fff;
+    color: var(--accent);
+    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.14);
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: all var(--transition-base);
-    overflow: hidden;
-    animation: fab-pulse 3s ease-in-out infinite;
-}
-
-@keyframes fab-pulse {
-    0%, 100% {
-        transform: translateX(-50%) scale(1);
-        box-shadow: var(--shadow-xl);
-    }
-    50% {
-        transform: translateX(-50%) scale(1.05);
-        box-shadow: 0 20px 50px 0 rgba(59, 130, 246, 0.4);
-    }
 }
 
 .ai-fab:hover {
-    animation: none;
-    transform: translateX(-50%) scale(1.1);
-    box-shadow: 0 20px 50px 0 rgba(59, 130, 246, 0.4);
+    background: var(--bg-muted);
 }
 
-.ai-fab img {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
+.ai-fab svg {
+    width: 24px;
+    height: 24px;
 }
 
-/* AI Mini Window */
+/* Mini popup (hidden by default) */
 .ai-mini {
     pointer-events: none;
     position: fixed;
+
+    /* CENTER (above FAB) */
     left: 50%;
-    bottom: calc(24px + 64px + 20px);
-    width: min(750px, calc(100vw - 40px));
-    max-height: calc(85vh - 100px);
+    right: auto;
+    bottom: calc(20px + 52px + 15px);
+
+    width: min(700px, calc(100vw - 30px));
+    max-height: calc(85vh - 50px);
     display: flex;
     flex-direction: column;
-    border-radius: var(--radius-xl);
-    border: 2px solid var(--border-medium);
-    background: var(--bg-primary);
-    box-shadow: var(--shadow-xl);
+    border-radius: 26px;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    background: #ffffff;
+    box-shadow: 0 16px 50px rgba(2, 6, 23, 0.18);
+
     opacity: 0;
-    transform: translate(-50%, 20px);
-    transition: all var(--transition-slow);
+
+    /* IMPORTANT: include X centering + Y animation together */
+    transform: translate(-50%, 12px);
+
+    transition: all 0.3s ease-in-out;
     overflow: visible;
 }
 
 .ai-mini.open {
     pointer-events: auto;
     opacity: 1;
+
+    /* keep centered when open */
     transform: translate(-50%, 0);
 }
 
-/* Docked Mode (Side Panel) */
+
+/* Expanded mode */
+.ai-mini.expanded {
+    width: min(520px, calc(100vw - 40px));
+    height: min(70vh, 560px);
+    max-height: none;
+}
+
+/* Docked mode (Google Colab style) */
 .ai-mini.docked {
+    /* Reset positioning to right side */
     left: auto;
     right: 0;
-    top: var(--navbar-height);
+    top: 56px;
     bottom: 0;
-    width: var(--ai-panel-width, 480px);
-    height: calc(100vh - var(--navbar-height));
+
+    /* Fixed width and full height - uses custom property for resize */
+    width: var(--ai-panel-width, 450px);
+    height: calc(100vh - 56px);
     max-height: none;
+
+    /* Remove rounded corners */
     border-radius: 0;
-    border-right: none;
-    box-shadow: -8px 0 24px 0 rgba(0, 0, 0, 0.12);
+
+    /* Enhanced shadow for depth */
+    box-shadow: -8px 0 24px rgba(2, 6, 23, 0.12);
+
+    /* Solid background when docked */
+    background: #ffffff;
+
+    /* Reset transform for docked state */
     transform: translate(0, 0);
+
+    /* Always visible when docked */
     opacity: 1;
     pointer-events: auto;
 }
@@ -1118,284 +1711,278 @@ body {
     background: transparent;
     z-index: 1001;
     display: none;
-    transition: background var(--transition-fast);
+    transition: background 0.2s ease;
 }
 
+/* Show resize handle only when docked */
 .ai-mini.docked .ai-resize-handle {
     display: block;
 }
 
+/* Visual feedback on hover */
 .ai-resize-handle:hover,
 .ai-resize-handle:active {
-    background: var(--accent-primary);
+    background: rgba(37, 99, 235, 0.3);
 }
 
-/* AI Header */
+/* ======================================================
+   AI PANEL HEADER
+====================================================== */
+/* ======================================================
+   AI PANEL HEADER (Restored: Floating Pills)
+====================================================== */
 .ai-mini-header {
     display: flex;
     align-items: center;
     justify-content: flex-end;
+    /* Align actions to right */
     padding: 0;
     height: 0;
-    margin-top: 20px;
-    border: none;
-    overflow: visible;
-}
+    margin-top: 17px;
 
-.ai-mini.docked .ai-mini-header {
-    height: 60px;
-    padding: 0 20px;
-    border-bottom: 1px solid var(--border-medium);
-    margin-top: 0;
+    /* Invisible layout container */
+    border: none;
+    flex-shrink: 0;
+    overflow: visible;
+    /* Allow buttons to float out */
 }
 
 .ai-mini-title {
     display: none;
+    /* Hide title per request */
 }
 
-.ai-mini.docked .ai-mini-title {
-    display: block;
-    font-weight: 600;
-    color: var(--text-primary);
+/* Docked Override: Reset */
+.ai-mini.docked .ai-mini-header {
+    height: 56px;
+    padding: 0 12px;
+    border-radius: 0;
 }
 
 .ai-mini-header-actions {
     display: flex;
     gap: 8px;
+    /* Float above the top-right corner */
     position: absolute;
-    top: -52px;
-    right: 16px;
+    top: -48px;
+    right: 10px;
     z-index: 10;
+    margin: 0;
+    padding: 0;
 }
 
+/* Icons Styles (Floating Pill Look) */
+.ai-mini-header-actions .ai-mini-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    /* Glassmorphism / Floating Pill style */
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.8);
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    color: #64748b;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.ai-mini-header-actions .ai-mini-icon:hover {
+    background: rgba(37, 99, 235, 0.1);
+    color: #2563eb;
+    transform: translateY(-2px) scale(1.05);
+    box-shadow: 0 8px 12px -2px rgba(37, 99, 235, 0.15), 0 4px 8px -2px rgba(37, 99, 235, 0.1);
+    border-color: rgba(37, 99, 235, 0.3);
+}
+
+/* Docked State: Reset to standard toolbar */
 .ai-mini.docked .ai-mini-header-actions {
     position: static;
     top: auto;
     right: auto;
+    background: transparent;
+    border: none;
+    gap: 4px;
 }
 
-.ai-mini-icon {
-    width: 40px;
-    height: 40px;
-    border-radius: var(--radius-sm);
-    background: var(--bg-primary);
-    border: 1px solid var(--border-medium);
-    box-shadow: var(--shadow-md);
-    color: var(--text-secondary);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all var(--transition-fast);
-}
-
-.ai-mini-icon:hover {
-    background: var(--accent-lighter);
-    border-color: var(--accent-primary);
-    color: var(--accent-primary);
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-lg);
-}
-
-.ai-mini.docked .ai-mini-icon {
-    width: 36px;
-    height: 36px;
+.ai-mini.docked .ai-mini-header-actions .ai-mini-icon {
     background: transparent;
     border: none;
     box-shadow: none;
+    backdrop-filter: none;
+    width: 30px;
+    height: 30px;
 }
 
-.ai-mini.docked .ai-mini-icon:hover {
-    transform: none;
-}
 
-/* AI Body */
-.ai-mini-body {
-    flex: 1;
-    padding: 24px;
-    overflow-y: auto;
-    overflow-x: hidden;
-    min-height: 0;
-    scrollbar-width: thin;
-    scrollbar-color: var(--border-strong) transparent;
-}
-
-.ai-mini-body::-webkit-scrollbar {
-    width: 6px;
-}
-
-.ai-mini-body::-webkit-scrollbar-track {
+/* Icon buttons (header) */
+.ai-mini-icon {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    border: 1px solid transparent;
     background: transparent;
-}
-
-.ai-mini-body::-webkit-scrollbar-thumb {
-    background: var(--border-strong);
-    border-radius: 3px;
-}
-
-.ai-mini-body::-webkit-scrollbar-thumb:hover {
-    background: var(--text-tertiary);
-}
-
-/* AI Messages */
-.ai-msg {
-    padding: 16px 20px;
-    border-radius: var(--radius-md);
-    margin-bottom: 16px;
-    line-height: 1.6;
-    animation: slideIn 0.3s ease-out;
-}
-
-@keyframes slideIn {
-    from {
-        opacity: 0;
-        transform: translateY(10px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-.ai-msg.user {
-    background: var(--accent-lighter);
-    border: 2px solid var(--accent-light);
-    margin-left: auto;
-    max-width: 85%;
-    position: relative;
-}
-
-.ai-msg.assistant {
-    background: var(--bg-tertiary);
-    border: 2px solid var(--border-light);
-    max-width: 100%;
-}
-
-.ai-msg h1, .ai-msg h2, .ai-msg h3 {
-    margin-top: 1.5em;
-    margin-bottom: 0.5em;
-    color: var(--text-primary);
-    font-weight: 600;
-}
-
-.ai-msg h1 { font-size: 1.5rem; }
-.ai-msg h2 { font-size: 1.25rem; }
-.ai-msg h3 { font-size: 1.1rem; }
-
-.ai-msg p {
-    margin-bottom: 1em;
-}
-
-.ai-msg p:last-child {
-    margin-bottom: 0;
-}
-
-.ai-msg code {
-    background: var(--bg-primary);
-    padding: 2px 6px;
-    border-radius: var(--radius-xs);
-    font-family: var(--font-mono);
-    font-size: 0.875em;
-    color: var(--accent-primary);
-}
-
-.ai-msg pre {
-    background: var(--bg-primary);
-    padding: 16px;
-    border-radius: var(--radius-sm);
-    overflow-x: auto;
-    border: 1px solid var(--border-medium);
-}
-
-.ai-msg pre code {
-    background: none;
-    padding: 0;
-    color: var(--text-primary);
-}
-
-/* Edit Message Button */
-.edit-message-btn {
-    position: absolute;
-    top: 50%;
-    left: -42px;
-    transform: translateY(-50%);
-    background: var(--bg-primary);
-    border: 1px solid var(--border-medium);
-    border-radius: 50%;
-    width: 32px;
-    height: 32px;
-    padding: 0;
-    cursor: pointer;
+    color: #64748b;
     display: flex;
     align-items: center;
     justify-content: center;
-    opacity: 0;
-    transition: all var(--transition-fast);
+    cursor: pointer;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.ai-msg.user:hover .edit-message-btn {
-    opacity: 1;
+.ai-mini-icon:hover {
+    background: rgba(37, 99, 235, 0.08);
+    color: #2563eb;
+    transform: scale(1.08);
+    border-color: rgba(37, 99, 235, 0.2);
 }
 
-.edit-message-btn:hover {
-    background: var(--accent-lighter);
-    border-color: var(--accent-primary);
-    color: var(--accent-primary);
+/* ======================================================
+   AI PANEL BODY (scrollable chat area)
+====================================================== */
+/* AI PANEL BODY - scrollable chat area */
+.ai-mini-body {
+    flex: 1;
+    padding: 22px 16px 12px 22px;
+    /* Reduced left/right padding */
+    overflow-y: auto;
+    overflow-x: hidden;
+    min-height: 0;
+    box-sizing: border-box;
+    /* â† ADD THIS - Critical for containing padding */
+    border-radius: 0 0 12px 12px;
 }
 
-.edit-message-btn svg {
-    width: 16px;
-    height: 16px;
+.ai-mini-body .ai-thinking-state {
+    margin: 6px auto 0 auto;
 }
 
-/* Suggestion Chips */
+
+.ai-mini-body .ai-ans {
+    background: rgba(255, 255, 255, 0.65);
+    border: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+/* Spacing between messages */
+/* Spacing between messages */
+.ai-msg.assistant {
+    padding: 18px 8px 12px 16px !important;
+    /* Reduced right padding */
+    margin: 20px 0 !important;
+    box-sizing: border-box;
+    /* â† ADD THIS */
+}
+
+.ai-msg.user {
+    padding: 14px 8px 12px 12px !important;
+    /* Reduced right padding */
+    margin: 20px 0 20px auto !important;
+    box-sizing: border-box;
+    /* â† ADD THIS */
+}
+
+
+/* Spacing within messages for markdown headers */
+.ai-msg h1,
+.ai-msg h2,
+.ai-msg h3 {
+    margin-top: 1.5em !important;
+    margin-bottom: 0.8em !important;
+}
+
+.ai-msg p {
+    margin-bottom: 1em !important;
+}
+
+.ai-msg p:last-child {
+    margin-bottom: 0 !important;
+}
+
+
+
+/* ======================================================
+   SUGGESTION CHIPS (Google Colab style)
+====================================================== */
 .ai-suggestion-chips {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-    padding: 12px 24px;
+    padding: 8px 14px;
     flex-shrink: 0;
 }
 
 .ai-suggestion-chips:empty {
     display: none;
+    padding: 0;
 }
 
 .ai-suggestion-chip {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 8px 16px;
-    border-radius: var(--radius-full);
-    border: 2px solid var(--accent-light);
-    background: var(--accent-lighter);
-    color: var(--accent-primary);
-    font-size: 0.875rem;
+    gap: 5px;
+    padding: 6px 14px;
+    border-radius: 18px;
+    border: 1px solid #c7d2fe;
+    background: #f0f0ff;
+    color: #4338ca;
+    font-size: 0.8rem;
     font-weight: 500;
     cursor: pointer;
-    transition: all var(--transition-fast);
-    animation: chipSlide 0.3s ease-out;
+    white-space: nowrap;
+    transition: all 0.15s ease;
+    animation: chipFadeIn 0.25s ease forwards;
+    opacity: 0;
 }
 
-@keyframes chipSlide {
+.ai-suggestion-chip:nth-child(1) {
+    animation-delay: 0s;
+}
+
+.ai-suggestion-chip:nth-child(2) {
+    animation-delay: 0.05s;
+}
+
+.ai-suggestion-chip:nth-child(3) {
+    animation-delay: 0.1s;
+}
+
+.ai-suggestion-chip:nth-child(4) {
+    animation-delay: 0.15s;
+}
+
+.ai-suggestion-chip:hover {
+    background: #e0e7ff;
+    border-color: #818cf8;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(67, 56, 202, 0.15);
+}
+
+.ai-suggestion-chip:active {
+    transform: scale(0.97);
+}
+
+.ai-suggestion-chip .chip-icon {
+    font-size: 0.85rem;
+    line-height: 1;
+}
+
+@keyframes chipFadeIn {
     from {
         opacity: 0;
-        transform: translateY(8px);
+        transform: translateY(6px);
     }
+
     to {
         opacity: 1;
         transform: translateY(0);
     }
 }
 
-.ai-suggestion-chip:hover {
-    background: var(--accent-light);
-    border-color: var(--accent-primary);
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-sm);
-}
-
-/* AI Input Bar */
+/* ======================================================
+   AI INPUT BAR (bottom, modern IDE style)
+====================================================== */
 .ai-input-bar {
     flex-shrink: 0;
     padding: 0px 12px 12px 12px;
@@ -1404,6 +1991,7 @@ body {
     background: inherit;
 }
 
+/* File chips row */
 .ai-file-chips {
     display: flex;
     flex-wrap: wrap;
@@ -1441,20 +2029,19 @@ body {
     background: none;
     border: none;
     cursor: pointer;
-    color: var(--accent-primary);
+    color: #6366f1;
     padding: 0;
     font-size: 0.95rem;
     /* Slightly smaller button icon */
     line-height: 1;
     display: flex;
-    transition: color var(--transition-fast);
 }
 
 .ai-file-chip button:hover {
-    color: var(--error);
+    color: #ef4444;
 }
 
-/* Input Container */
+/* Input Container (Gemini Style) */
 .ai-input-container {
     display: flex;
     flex-direction: column;
@@ -1470,11 +2057,12 @@ body {
 }
 
 .ai-input-container:focus-within {
-    border-color: var(--accent-primary);
-    box-shadow: 0 0 0 3px var(--accent-lighter);
-    background: var(--bg-primary);
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    background: #fff;
 }
 
+/* Textarea styling */
 .ai-mini-input {
     width: 100%;
     border: none;
@@ -1495,9 +2083,10 @@ body {
 }
 
 .ai-mini-input::placeholder {
-    color: var(--text-tertiary);
+    color: #94a3b8;
 }
 
+/* Bottom Toolbar */
 .ai-input-toolbar {
     display: flex;
     align-items: center;
@@ -1513,9 +2102,12 @@ body {
     /* Tighter gap */
 }
 
+/* Icons common styles */
+/* Match cell-control buttons: size, svg sizing, hover animation */
 .ai-input-icon,
 .ai-input-icon-plus,
 .ai-send-btn-icon {
+    /* Match `.cell-controls` button exactly */
     background: transparent;
     border: none;
     border-radius: 50%;
@@ -1537,6 +2129,7 @@ body {
     transition: background-color 0.2s ease, color 0.15s ease;
 }
 
+/* Ensure SVG sizes/stroke match cell controls */
 .ai-input-icon svg,
 .ai-input-icon-plus svg,
 .ai-send-btn-icon svg {
@@ -1549,53 +2142,169 @@ body {
     display: block;
 }
 
-.ai-send-btn-icon {
-    background: var(--accent-primary);
-    color: var(--text-inverse);
-}
-
+/* Hover behavior: exactly like `.cell-controls button:hover` */
+.ai-input-icon:hover,
+.ai-input-icon-plus:hover,
 .ai-send-btn-icon:hover {
-    background: var(--accent-hover);
-    transform: scale(1.1);
+    background-color: #f1f5f9;
+    color: #1e293b;
 }
 
+/* When SVG stroke should highlight on hover (like toolbar icons) */
+.ai-input-icon:hover svg,
+.ai-input-icon-plus:hover svg,
+.ai-send-btn-icon:hover svg {
+    stroke: #2563eb;
+}
+
+/* Plus button specific */
+.ai-input-icon-plus {
+    background: var(--bg-surface);
+    color: #0f172a;
+}
+
+/* Hover: match .add-cell-btn hover animation */
+.ai-input-icon:hover,
+.ai-input-icon-plus:hover,
+.ai-send-btn-icon:hover,
+.ai-mini-icon:hover {
+    background: var(--bg-muted);
+    border-color: #c7d2fe;
+    color: #0f172a;
+}
+
+
+
+/* Mic active state */
 .ai-input-icon.recording {
-    color: var(--error);
-    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+    background: #fef2f2;
     animation: pulse-mic 1.2s infinite;
 }
 
 @keyframes pulse-mic {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.5;
+    }
 }
 
-/* Thinking State */
-.ai-thinking-state {
-    width: 100%;
-    max-width: 600px;
-    height: 56px;
-    margin: 0 auto;
-    background: var(--bg-primary);
-    border: 2px solid var(--border-medium);
-    border-radius: var(--radius-full);
-    box-shadow: var(--shadow-md);
+/* Send Button */
+.ai-send-btn-icon {
+    color: #2563eb;
+}
+
+.ai-send-btn-icon:hover {
+    background: #eff6ff;
+    color: #1d4ed8;
+}
+
+.ai-send-btn-icon.is-loading {
+    color: #ef4444;
+}
+
+.ai-send-btn-icon.is-loading:hover {
+    background: #fef2f2;
+    color: #dc2626;
+}
+
+
+
+/* ========================================
+   BREATHING ANIMATIONS FOR AI WIDGET
+   ======================================== */
+
+/* Breathing animation keyframes for border */
+@keyframes border-breathe {
+
+    0%,
+    100% {
+        border-color: rgba(148, 163, 184, 0.35);
+        box-shadow: 0 16px 50px rgba(2, 6, 23, 0.18);
+    }
+
+    50% {
+        border-color: rgba(37, 99, 235, 0.6);
+        box-shadow: 0 16px 50px rgba(2, 6, 23, 0.18),
+            0 0 20px rgba(37, 99, 235, 0.4);
+    }
+}
+
+/* Breathing animation for FAB button */
+@keyframes fab-breathe {
+
+    0%,
+    100% {
+        transform: translateX(-50%) scale(1);
+        box-shadow: 0 10px 28px rgba(15, 23, 42, 0.14);
+    }
+
+    50% {
+        transform: translateX(-50%) scale(1.08);
+        box-shadow: 0 12px 32px rgba(15, 23, 42, 0.20),
+            0 0 20px rgba(37, 99, 235, 0.5);
+    }
+}
+
+
+
+/* Glowing pulse for FAB icon */
+@keyframes icon-glow {
+
+    0%,
+    100% {
+        filter: drop-shadow(0 0 2px rgba(37, 99, 235, 0.3));
+    }
+
+    50% {
+        filter: drop-shadow(0 0 8px rgba(37, 99, 235, 0.8));
+    }
+}
+
+/* ========================================
+   APPLY ANIMATIONS TO FAB BUTTON
+   ======================================== */
+
+.ai-fab {
+    pointer-events: auto;
+    position: fixed;
+    /* CENTER */
+    left: 50%;
+    right: auto;
+    bottom: 20px;
+    transform: translateX(-50%);
+    width: 52px;
+    height: 52px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: #fff;
+    color: var(--accent);
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 0 24px;
-    color: var(--text-secondary);
-    font-size: 0.95rem;
+    justify-content: center;
+    cursor: pointer;
+
+    /* Apply breathing animation */
+    animation: fab-breathe 3s ease-in-out infinite;
+    transition: all 0.3s ease;
 }
 
-.pulse-icon {
-    margin-right: 8px;
-    animation: pulse-fade 1.5s infinite;
+/* Enhanced hover state - faster breathing */
+.ai-fab:hover {
+    animation: fab-breathe 1.8s ease-in-out infinite;
+    background: var(--bg-muted);
 }
 
-@keyframes pulse-fade {
-    0%, 100% { opacity: 0.6; }
-    50% { opacity: 1; }
+/* Icon glow animation */
+.ai-fab svg {
+    width: 24px;
+    height: 24px;
+    animation: icon-glow 4s ease-in-out infinite;
 }
 
 /* ========================================
@@ -1747,10 +2456,13 @@ body {
     background: transparent;
     /* Transparent background */
     border: none;
-    border-radius: var(--radius-sm);
+    /* No border */
+    border-radius: 6px;
+    padding: 4px 6px;
     cursor: pointer;
-    font-weight: 500;
-    font-size: 0.875rem;
+    opacity: 1;
+    /* Always visible */
+    transition: opacity 0.2s;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1944,120 +2656,154 @@ body {
     overflow-y: auto;
 }
 
+/* Individual chat item */
 .chat-list-item {
-    padding: 12px 16px;
-    background: var(--bg-tertiary);
-    border: 2px solid var(--border-light);
-    border-radius: var(--radius-sm);
+    padding: 12px;
+    background: #f8fafc;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
     cursor: pointer;
+    transition: all 0.2s;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
-    transition: all var(--transition-fast);
+    gap: 8px;
 }
 
 .chat-list-item:hover {
-    border-color: var(--border-medium);
-    box-shadow: var(--shadow-sm);
+    background: #f1f5f9;
+    border-color: #cbd5e1;
 }
 
 .chat-list-item.active {
-    background: var(--accent-lighter);
-    border-color: var(--accent-primary);
-    box-shadow: 0 0 0 3px var(--accent-lighter);
+    background: #eff6ff;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
 }
 
+/* Shared selected state for saved-notebook and history drawer cards */
+.drawer-item--selected {
+    background: #eff6ff !important;
+    border-color: #3b82f6 !important;
+    border-width: 1.5px !important;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.10) !important;
+    transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+
+/* Delete button for chat items */
+.chat-list-item .delete-db-btn {
+    opacity: 0;
+    background: transparent;
+    border: none;
+    color: #ef4444;
+    cursor: pointer;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 0.2s, color 0.2s;
+    flex-shrink: 0;
+}
+
+.chat-list-item:hover .delete-db-btn {
+    opacity: 1;
+}
+
+.chat-list-item .delete-db-btn:hover {
+    color: #dc2626;
+}
+
+/* Chat title */
 .chat-title {
     font-weight: 500;
-    font-size: 0.875rem;
-    color: var(--text-primary);
+    font-size: 0.9rem;
+    color: #0f172a;
     margin-bottom: 4px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
+/* Chat date */
 .chat-date {
     font-size: 0.75rem;
-    color: var(--text-tertiary);
+    color: #64748b;
 }
 
-.chat-edit-btn,
-.chat-list-item .delete-db-btn {
-    opacity: 0;
-    background: transparent;
+/* New chat button in drawer */
+.new-chat-btn-drawer {
+    width: 100%;
+    padding: 10px;
+    background: #3b82f6;
+    color: white;
     border: none;
-    padding: 6px;
+    border-radius: 8px;
     cursor: pointer;
+    font-weight: 500;
+    font-size: 0.9rem;
+    transition: background 0.2s;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all var(--transition-fast);
-    flex-shrink: 0;
 }
 
-.chat-edit-btn {
-    color: var(--text-tertiary);
+.new-chat-btn-drawer:hover {
+    background: #2563eb;
 }
 
-.chat-list-item .delete-db-btn {
-    color: var(--error);
-}
-
-.chat-list-item:hover .chat-edit-btn,
-.chat-list-item:hover .delete-db-btn {
-    opacity: 1;
-}
-
-.chat-edit-btn:hover {
-    color: var(--accent-primary);
-}
-
-.chat-title-input {
-    font-size: 0.875rem;
-    padding: 4px 8px;
-    border-radius: var(--radius-xs);
-    border: 2px solid var(--accent-primary);
-    outline: none;
-    background: var(--bg-primary);
+/* Empty state */
+.chat-list-empty {
+    text-align: center;
+    padding: 40px 20px;
+    color: #94a3b8;
+    font-size: 0.9rem;
 }
 
 /* ======================================================
-   CUSTOM DIALOG SYSTEM
+   CUSTOM DIALOG SYSTEM (updated to match requested visual)
+   - larger bold title
+   - pill buttons (outline cancel / red destructive)
+   - no info icon (keeps message text only)
 ====================================================== */
 .custom-dialog-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(15, 23, 42, 0.6);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    background-color: rgba(2, 6, 23, 0.55);
     display: flex;
     align-items: center;
     justify-content: center;
     z-index: 2000;
-    animation: fadeIn 0.2s ease-out;
+    animation: fadeIn 0.18s ease-out;
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
 }
 
 @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
 }
 
 .custom-dialog-modal {
-    background: var(--bg-primary);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-xl);
-    max-width: 500px;
-    width: min(500px, 90vw);
-    animation: slideUp 0.3s cubic-bezier(0.2, 0.9, 0.2, 1);
+    background: #ffffff;
+    border-radius: 18px;
+    box-shadow: 0 30px 60px rgba(2, 6, 23, 0.35);
+    max-width: 640px;
+    width: min(640px, 92vw);
+    animation: slideUp 0.28s cubic-bezier(.2, .9, .2, 1);
+    overflow: visible;
 }
 
 @keyframes slideUp {
     from {
         opacity: 0;
-        transform: translateY(20px);
+        transform: translateY(10px);
     }
+
     to {
         opacity: 1;
         transform: translateY(0);
@@ -2068,117 +2814,179 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 24px 24px 16px;
-    border-bottom: 1px solid var(--border-medium);
+    padding: 22px 26px 18px 26px;
+    border-bottom: none;
+    /* cleaner look like the reference */
 }
 
 .custom-dialog-title {
     margin: 0;
-    font-size: 1.25rem;
-    font-weight: 700;
+    font-size: 1.5rem;
+    /* ~24px */
+    font-weight: 800;
     color: var(--text-primary);
 }
 
 .custom-dialog-close {
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-medium);
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    display: flex;
+    background: rgba(15, 23, 42, 0.03);
+    border: 1px solid rgba(15, 23, 42, 0.06);
+    width: 40px;
+    height: 40px;
+    border-radius: 9999px;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    color: var(--text-tertiary);
-    transition: all var(--transition-fast);
+    color: #9aa3b2;
+    transition: background-color 0.15s, transform 0.12s;
 }
 
 .custom-dialog-close:hover {
-    background: var(--bg-hover);
+    background: rgba(15, 23, 42, 0.06);
+    transform: translateY(-1px);
     color: var(--text-primary);
 }
 
 .custom-dialog-content {
-    padding: 24px;
+    padding: 18px 26px 22px 26px;
 }
 
 .custom-dialog-message {
-    margin: 0 0 16px;
-    color: var(--text-primary);
+    margin: 0 0 8px 0;
+    color: #0f172a;
+    font-size: 1rem;
     line-height: 1.6;
 }
 
 .custom-dialog-input {
     width: 100%;
-    padding: 12px 16px;
-    border: 2px solid var(--border-medium);
-    border-radius: var(--radius-sm);
-    font-size: 0.95rem;
+    padding: 12px 14px;
+    border: 1px solid #e6e9ef;
+    border-radius: 10px;
+    font-size: 0.98rem;
+    font-family: inherit;
     outline: none;
-    transition: all var(--transition-fast);
+    transition: border-color 0.16s, box-shadow 0.16s;
 }
 
 .custom-dialog-input:focus {
-    border-color: var(--accent-primary);
-    box-shadow: 0 0 0 3px var(--accent-lighter);
+    border-color: var(--accent);
+    box-shadow: 0 6px 20px rgba(37, 99, 235, 0.12);
 }
 
 .custom-dialog-actions {
     display: flex;
-    gap: 12px;
-    padding: 16px 24px 24px;
-    justify-content: flex-end;
+    gap: 18px;
+    padding: 18px 26px 26px 26px;
+    justify-content: center;
+    /* center the two-pill buttons */
 }
 
 .custom-dialog-btn {
-    padding: 12px 24px;
-    border-radius: var(--radius-sm);
-    font-size: 0.9rem;
-    font-weight: 600;
+    padding: 12px 36px;
+    border-radius: 9999px;
+    font-size: 1rem;
+    font-weight: 700;
     cursor: pointer;
-    transition: all var(--transition-fast);
-    min-width: 100px;
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+    min-width: 140px;
 }
 
 .custom-dialog-btn-cancel {
-    background: var(--bg-tertiary);
-    color: var(--text-primary);
-    border: 2px solid var(--border-medium);
+    background: #ffffff;
+    color: #4a505f;
+    border: 2px solid #e6e9ef;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.18s ease;
 }
 
-.custom-dialog-btn-cancel:hover {
-    background: var(--bg-hover);
-    border-color: var(--accent-primary);
+
+/* Default hover â€” primary context (Save / New / OK): blue border */
+.custom-dialog-btn-cancel:hover,
+.custom-dialog-btn-cancel[data-context="primary"]:hover {
+    background: #fbfdff;
+    border-color: var(--accent);
+    transform: translateY(-2px);
 }
+
+/* Destructive context (Delete): red border on hover */
+.custom-dialog-btn-cancel[data-context="danger"]:hover {
+    background: #fff8f8;
+    border-color: #ef4444;
+    transform: translateY(-2px);
+}
+
 
 .custom-dialog-btn-confirm {
-    background: var(--accent-primary);
-    color: var(--text-inverse);
+    background: var(--accent);
+    color: #ffffff;
     border: none;
-    box-shadow: var(--shadow-md);
+    box-shadow: 0 8px 30px rgba(37, 99, 235, 0.18);
 }
 
 .custom-dialog-btn-confirm:hover {
-    background: var(--accent-hover);
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-lg);
+    transform: translateY(-2px);
+    box-shadow: 0 14px 40px rgba(37, 99, 235, 0.22);
 }
 
 .custom-dialog-btn-confirm.danger {
-    background: var(--error);
+    background: #ef4444;
+    /* destructive red */
+    box-shadow: 0 14px 40px rgba(239, 68, 68, 0.18);
 }
 
 .custom-dialog-btn-confirm.danger:hover {
-    background: #dc2626;
+    background: #ff5757;
+    box-shadow: 0 20px 50px rgba(239, 68, 68, 0.24);
+}
+
+.ai-fab {
+    width: 55px;
+    height: 55px;
+    padding: 0;
+    border-radius: 50%;
+    /* remove this if you don't want circle */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    /* keeps it clean */
+}
+
+.ai-fab img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    /* IMPORTANT: shows whole image */
 }
 
 /* ======================================================
-   KEYBOARD SHORTCUTS MODAL
-====================================================== */
+/* ======================================================
+   KEYBOARD SHORTCUTS STYLING
+   ====================================================== */
+
+/* Help button in navbar */
+.keyboard-shortcuts-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    transition: all 0.2s ease;
+}
+
+.keyboard-shortcuts-btn:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+}
+
+/* Modal overlay */
 .keyboard-shortcuts-modal {
     display: none;
     position: fixed;
-    inset: 0;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
     z-index: 10000;
     justify-content: center;
     align-items: center;
@@ -2186,329 +2994,194 @@ body {
 
 .keyboard-shortcuts-overlay {
     position: absolute;
-    inset: 0;
-    background: rgba(15, 23, 42, 0.6);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.35);
     display: flex;
     justify-content: center;
     align-items: center;
     cursor: pointer;
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
 }
 
+/* Modal content */
 .keyboard-shortcuts-content {
-    background: var(--bg-primary);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-xl);
-    width: min(900px, 92vw);
-    max-height: 85vh;
+    background: #ffffff;
+    border-radius: 14px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.18);
+    width: min(820px, 92vw);
+    max-height: 82vh;
     display: flex;
     flex-direction: column;
     cursor: default;
-    animation: slideUp 0.3s cubic-bezier(0.2, 0.9, 0.2, 1);
+    animation: ks-slide-up 0.25s cubic-bezier(0.2, 0.9, 0.2, 1);
 }
 
+@keyframes ks-slide-up {
+    from {
+        opacity: 0;
+        transform: translateY(12px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Header */
 .shortcuts-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 24px 28px;
-    border-bottom: 1px solid var(--border-medium);
+    padding: 22px 28px 18px 28px;
+    border-bottom: 1px solid #e5e7eb;
+    flex-shrink: 0;
 }
 
 .shortcuts-title {
     margin: 0;
-    font-size: 1.25rem;
-    font-weight: 700;
-    color: var(--text-primary);
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: #0f172a;
+    letter-spacing: 0.01em;
 }
 
 .shortcuts-close {
     background: transparent;
     border: none;
-    color: var(--text-tertiary);
+    color: #94a3b8;
     cursor: pointer;
-    padding: 8px;
-    border-radius: var(--radius-xs);
+    padding: 6px;
+    border-radius: 6px;
     display: flex;
-    transition: all var(--transition-fast);
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, color 0.15s;
 }
 
 .shortcuts-close:hover {
-    background: var(--bg-hover);
-    color: var(--text-primary);
+    background: #f1f5f9;
+    color: #0f172a;
 }
 
+/* Two-column layout */
 .ks-two-col {
     flex: 1;
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 1px;
+    gap: 0 1px;
     overflow-y: auto;
-    padding: 16px 0;
-    background: var(--border-light);
+    padding: 8px 0;
+    background: #e5e7eb;
 }
 
 .ks-col {
-    background: var(--bg-primary);
+    background: #ffffff;
     padding: 12px 0;
+    display: flex;
+    flex-direction: column;
 }
 
+/* Section group */
 .ks-section {
-    margin-bottom: 16px;
+    margin-bottom: 4px;
 }
 
+/* Section title */
 .ks-section-title {
-    font-size: 0.75rem;
+    font-size: 0.68rem;
     font-weight: 600;
-    letter-spacing: 0.05em;
-    color: var(--text-tertiary);
+    letter-spacing: 0.1em;
+    color: #94a3b8;
     text-transform: uppercase;
-    padding: 8px 24px;
+    padding: 14px 24px 8px 24px;
 }
 
+/* Each shortcut row */
 .ks-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 12px 24px;
+    padding: 9px 24px;
+    border-top: 1px solid #f1f5f9;
     gap: 16px;
-    transition: background var(--transition-fast);
+    transition: background 0.12s;
 }
 
 .ks-row:hover {
-    background: var(--bg-hover);
+    background: #f8fafc;
 }
 
 .ks-row--first {
-    border-top: 1px solid var(--border-light);
+    border-top-color: #e9ecef;
 }
 
+/* Action description (left side) */
 .ks-description {
     font-size: 0.875rem;
-    color: var(--text-secondary);
+    color: #475569;
     flex: 1;
+    min-width: 0;
 }
 
+/* Shortcut key text (right side) */
 .ks-keys {
-    font-size: 0.875rem;
+    font-size: 0.82rem;
     font-weight: 600;
-    color: var(--text-primary);
+    color: #1e293b;
     white-space: nowrap;
-    font-family: var(--font-mono);
-    background: var(--bg-tertiary);
-    padding: 4px 12px;
-    border-radius: var(--radius-xs);
+    flex-shrink: 0;
+    font-family: 'Fira Code', ui-monospace, monospace;
+    letter-spacing: 0.02em;
 }
 
-.shortcuts-footer {
-    padding: 16px 28px;
-    border-top: 1px solid var(--border-medium);
-    text-align: center;
-    font-size: 0.875rem;
-    color: var(--text-tertiary);
+/* Scrollbar for the two-col area */
+.ks-two-col::-webkit-scrollbar {
+    width: 5px;
 }
 
-.shortcuts-footer strong {
-    color: var(--text-secondary);
-}
-
-/* ======================================================
-   CUSTOM SCROLLBAR
-====================================================== */
-::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-}
-
-::-webkit-scrollbar-track {
+.ks-two-col::-webkit-scrollbar-track {
     background: transparent;
 }
 
-::-webkit-scrollbar-thumb {
-    background: var(--border-strong);
+.ks-two-col::-webkit-scrollbar-thumb {
+    background: #e2e8f0;
     border-radius: 4px;
 }
 
-::-webkit-scrollbar-thumb:hover {
-    background: var(--text-tertiary);
+.ks-two-col::-webkit-scrollbar-thumb:hover {
+    background: #cbd5e1;
 }
 
-::-webkit-scrollbar-corner {
-    background: transparent;
+/* Footer */
+.shortcuts-footer {
+    padding: 14px 28px;
+    border-top: 1px solid #e5e7eb;
+    text-align: center;
+    font-size: 0.8rem;
+    color: #94a3b8;
+    border-radius: 0 0 14px 14px;
+    flex-shrink: 0;
 }
 
-/* ======================================================
-   CODEMIRROR & MONACO OVERRIDES
-====================================================== */
-.CodeMirror {
-    background: transparent !important;
-    border: none !important;
-    font-family: var(--font-mono) !important;
-    font-size: 0.9rem !important;
-    line-height: 1.6 !important;
-    height: auto !important;
-    color: var(--text-primary) !important;
+.shortcuts-footer strong {
+    color: #64748b;
+    font-weight: 600;
 }
 
-.CodeMirror-scroll {
-    overflow: hidden !important;
-}
-
-.CodeMirror-gutters {
-    background: transparent !important;
-    border: none !important;
-}
-
-.CodeMirror-linenumber {
-    color: transparent !important;
-}
-
-.CodeMirror-lines {
-    padding: 8px 0 !important;
-}
-
-/* ======================================================
-   RESPONSIVE DESIGN
-====================================================== */
-@media (max-width: 768px) {
-    :root {
-        --navbar-height: 56px;
-        --sidebar-width: 64px;
-    }
-
-    .navbar-buttons button span {
-        display: none;
-    }
-
-    .nav-label {
-        display: none;
-    }
-
-    .sidebar {
-        width: 64px;
-    }
-
-    .drawer {
-        left: 64px;
-        width: 300px;
-    }
-
-    .cell-container {
-        padding: 16px 12px;
-    }
-
+/* Responsive: stack to single column on small screens */
+@media (max-width: 560px) {
     .ks-two-col {
         grid-template-columns: 1fr;
-    }
-}
-
-/* ======================================================
-   UTILITY CLASSES
-====================================================== */
-.drawer-item--selected {
-    background: var(--accent-lighter) !important;
-    border-color: var(--accent-primary) !important;
-    box-shadow: 0 0 0 3px var(--accent-lighter) !important;
-}
-
-/* Upload Section */
-.upload-container {
-    padding: 16px;
-}
-
-.upload-container input[type="file"] {
-    display: block;
-    margin-bottom: 16px;
-    width: 100%;
-    padding: 12px;
-    border: 2px dashed var(--border-medium);
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-}
-
-.upload-container input[type="file"]:hover {
-    border-color: var(--accent-primary);
-    background: var(--accent-lighter);
-}
-
-#upload-btn {
-    width: 100%;
-    padding: 12px;
-    background: var(--accent-primary);
-    color: var(--text-inverse);
-    border: none;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    font-weight: 500;
-    transition: all var(--transition-fast);
-}
-
-#upload-btn:hover {
-    background: var(--accent-hover);
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-md);
-}
-
-#upload-status {
-    margin-top: 16px;
-    font-size: 0.875rem;
-    line-height: 1.6;
-    color: var(--text-secondary);
-}
-
-/* Colab Style Input */
-.colab-style {
-    border: 2px solid var(--border-medium);
-    border-radius: var(--radius-sm);
-    background: var(--bg-primary);
-    margin-bottom: 8px;
-}
-
-.colab-input-area {
-    position: relative;
-    width: 100%;
-    display: flex;
-    align-items: center;
-    min-height: 48px;
-}
-
-.colab-editor {
-    width: 100%;
-    border: none;
-    outline: none;
-    background: transparent;
-    font-family: var(--font-mono);
-    font-size: 0.9rem;
-    line-height: 1.6;
-    color: var(--text-primary);
-    padding: 12px 16px;
-    resize: none;
-    min-height: 40px;
-}
-
-.colab-placeholder-text {
-    position: absolute;
-    left: 16px;
-    color: var(--text-tertiary);
-    pointer-events: none;
-    transition: opacity var(--transition-fast);
-}
-
-/* Print Styles */
-@media print {
-    .navbar,
-    .sidebar,
-    .drawer,
-    #ai-widget,
-    .cell-controls,
-    .add-cell-bar {
-        display: none !important;
+        background: #ffffff;
     }
 
-    .content {
-        margin: 0 !important;
+    .ks-col {
+        padding: 4px 0;
     }
 }
 
@@ -2525,6 +3198,8 @@ body {
     transition: all 0.2s ease;
     font-size: 15px;
 }
+
+
 
 .notebook-btn:hover {
     background: rgba(37, 99, 235, 0.1);
