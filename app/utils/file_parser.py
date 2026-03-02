@@ -13,7 +13,8 @@ def extract_text_from_file(file_content: bytes, filename: str) -> str:
             return _extract_from_pdf(file_content)
         elif filename_lower.endswith('.docx'):
             return _extract_from_docx(file_content)
-        elif filename_lower.endswith('.txt'):
+        elif filename_lower.endswith(('.txt', '.csv', '.py', '.js', '.json', '.ipynb', '.html', '.css', '.md')):
+            # Code, JSON, Python Notebooks, Markdown, and tabular files can all be decoded directly to UTF-8
             return file_content.decode('utf-8', errors='ignore')
         else:
             return f"Unsupported file type: {filename}"
