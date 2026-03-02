@@ -6,7 +6,7 @@ from openai import OpenAI
 CONFIG_FILE = "llm_config.json"
 
 # 👉 Define your OpenAI API key here
-OPENAI_API_KEY = ""
+OPENAI_API_KEY = "OPENAI_API_KEY"
 
 class LLMClient:
     def __init__(self):
