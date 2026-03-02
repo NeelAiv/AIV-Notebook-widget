@@ -1,6 +1,5 @@
 ﻿let currentAbortController = null;
 let attachedFiles = [];
-// Global chat history
 let chatHistory = [];
 let messagePairs = []; // Tracks {userBubble, assistantBubble, prompt} for editing
 let editingMessageIndex = null; // Index of message currently being edited inline (null = none)
@@ -9,6 +8,7 @@ let lastDataForChart = null;
 let pyodide = null; // Global Pyodide instance
 let showCode = true; // Global toggle: set to false to hide code blocks in AI responses
 let pendingCodeProposal = null; // Pending AI code action for the active code cell
+let lastActiveCellId = null; // Tracks the last cell that was run or focused
 
 // =======================
 // LOADING SCREEN MANAGEMENT
@@ -80,7 +80,7 @@ function showCustomDialog(title, message, options = {}) {
         inputEl.placeholder = options.placeholder || '';
         inputEl.value = options.defaultValue || '';
         confirmBtn.textContent = 'OK';
-        
+
         // Add keyboard support for prompt input
         inputEl.onkeydown = (e) => {
             if (e.key === 'Enter') {
@@ -89,7 +89,7 @@ function showCustomDialog(title, message, options = {}) {
                 cancelCustomDialog();
             }
         };
-        
+
         setTimeout(() => inputEl.focus(), 100);
     }
 
@@ -115,7 +115,7 @@ async function confirmCustomDialog() {
     const inputEl = document.getElementById('custom-dialog-input');
     const confirmBtn = document.getElementById('custom-dialog-confirm');
     const content = document.querySelector('.custom-dialog-content');
-    
+
     // Clear previous errors
     const existingErr = document.getElementById('custom-dialog-error');
     if (existingErr) existingErr.remove();
@@ -124,7 +124,7 @@ async function confirmCustomDialog() {
     let result = true;
     if (dialogConfig.type === 'prompt') {
         result = inputEl.value.trim();
-        
+
         // ── Validation Logic ──────────────────────────────────────────
         if (dialogConfig.validator) {
             // Disable button during check
@@ -139,7 +139,7 @@ async function confirmCustomDialog() {
                     errDiv.style.cssText = 'color:#ef4444; font-size:0.85rem; margin-top:8px; display:flex; align-items:center;';
                     // Add icon
                     errDiv.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> ${error}`;
-                    
+
                     content.appendChild(errDiv);
                     inputEl.style.border = '1px solid #ef4444';
                     inputEl.focus();
@@ -148,7 +148,7 @@ async function confirmCustomDialog() {
             } catch (e) {
                 console.error(e);
                 confirmCustomDialog(); // close on system error? or show error?
-                return; 
+                return;
             } finally {
                 confirmBtn.disabled = false;
                 confirmBtn.style.opacity = '1';
@@ -199,7 +199,7 @@ function generateNotebookName() {
 const NAVBAR_TITLE_MAX_CHARS = 25;
 
 function setNotebookTitle(name) {
-    const wrapEl  = document.getElementById('navbar-nb-scroll-wrap');
+    const wrapEl = document.getElementById('navbar-nb-scroll-wrap');
     const titleEl = document.getElementById('navbar-notebook-title');
     if (!wrapEl || !titleEl) return;
 
@@ -221,7 +221,7 @@ function setNotebookTitle(name) {
         // Wait one frame so the browser can measure real widths
         requestAnimationFrame(() => {
             const containerWidth = titleEl.offsetWidth;
-            const textWidth      = span1.scrollWidth;
+            const textWidth = span1.scrollWidth;
 
             if (textWidth > containerWidth) {
                 const GAP_PX = 56;
@@ -239,10 +239,10 @@ function setNotebookTitle(name) {
 
                     // ── Pause-at-start logic ──────────────────────────────
                     // Scroll at 36 px/s, then hold for 1.5 s before repeating
-                    const PAUSE_SECS  = 1.5;
-                    const scrollSecs  = Math.max(8, unitWidth / 36);
-                    const totalSecs   = scrollSecs + PAUSE_SECS;
-                    const pausePct    = ((PAUSE_SECS / totalSecs) * 100).toFixed(3);
+                    const PAUSE_SECS = 1.5;
+                    const scrollSecs = Math.max(8, unitWidth / 36);
+                    const totalSecs = scrollSecs + PAUSE_SECS;
+                    const pausePct = ((PAUSE_SECS / totalSecs) * 100).toFixed(3);
 
                     // Inject / update a dedicated <style> with exact keyframe percentages
                     let kfStyle = document.getElementById('nb-marquee-kf');
@@ -274,10 +274,10 @@ let viewingHistoryOriginalNotebook = null; // display_name of original notebook 
 
 // Per-drawer selection state (persists across open/close)
 let selectedSavedNotebook = null;  // display_name string
-let selectedHistoryId     = null;  // numeric id
+let selectedHistoryId = null;  // numeric id
 
 // Dirty-state tracking
-let isDirty         = false;  // true when unsaved changes exist
+let isDirty = false;  // true when unsaved changes exist
 let isNotebookSaved = false;  // true once the notebook has been saved at least once
 let currentNotebookName = null; // display name of the active notebook (null if never saved)
 
@@ -365,7 +365,7 @@ function autoResize(textarea) {
 // Initialize CodeMirror for syntax highlighting
 function initCodeMirror(textarea) {
     if (!textarea || textarea.dataset.cmInitialized) return;
-    
+
     const editor = CodeMirror.fromTextArea(textarea, {
         mode: 'python',
         lineNumbers: false,
@@ -377,7 +377,7 @@ function initCodeMirror(textarea) {
         autofocus: false,
         scrollbarStyle: 'null'
     });
-    
+
     textarea.dataset.cmInitialized = 'true';
     editor.on('change', () => {
         // Mark notebook dirty whenever user edits code in CodeMirror
@@ -387,35 +387,35 @@ function initCodeMirror(textarea) {
             placeholder.style.opacity = editor.getValue() ? '0' : '1';
         }
     });
-    
+
     return editor;
 }
 
 
 function focusAI() {
-  const mini = document.getElementById("ai-mini");
-  if (mini) {
-    mini.classList.add("open");
-    mini.setAttribute("aria-hidden", "false");
-  }
-  const input = document.getElementById("prompt-input");
-  if (input) input.focus();
+    const mini = document.getElementById("ai-mini");
+    if (mini) {
+        mini.classList.add("open");
+        mini.setAttribute("aria-hidden", "false");
+    }
+    const input = document.getElementById("prompt-input");
+    if (input) input.focus();
 }
 
 // Removes triple-backtick code blocks and inline backticks from a text blob
 function stripCodeBlocks(text) {
-        if (!text) return text;
-        // Remove fenced code blocks (```...```) including language hints
-        text = text.replace(/```[\s\S]*?```/g, "");
-        // Convert inline code `like_this` to plain text (remove backticks)
-        text = text.replace(/`([^`]+)`/g, "$1");
-        return text.trim();
+    if (!text) return text;
+    // Remove fenced code blocks (```...```) including language hints
+    text = text.replace(/```[\s\S]*?```/g, "");
+    // Convert inline code `like_this` to plain text (remove backticks)
+    text = text.replace(/`([^`]+)`/g, "$1");
+    return text.trim();
 }
 
 function toggleShowCode(val) {
-        if (typeof val === 'boolean') showCode = val;
-        else showCode = !showCode;
-        return showCode;
+    if (typeof val === 'boolean') showCode = val;
+    else showCode = !showCode;
+    return showCode;
 }
 
 function getActiveCodeCell() {
@@ -817,125 +817,6 @@ function stageCodeProposalUI(code, prompt) {
 }
 
 
-
-// --- script.js ---
-// --- script.js ---
-async function initPyodide() {
-    const dot = document.getElementById('status-dot');
-    const text = document.getElementById('status-text');
-    text.innerText = "Loading Python Kernel...";
-    dot.style.color = "orange";
-
-    try {
-        pyodide = await loadPyodide();
-        // 1. Load Libraries
-        await pyodide.loadPackage(["micropip", "numpy", "pandas", "matplotlib"]);
-        // 2. Initialize Kernel
-        await pyodide.runPythonAsync(`
-            import sys
-            import io
-            import base64
-            import ast
-            import gc
-            import json
-            # Import HTTP Client for Pyodide
-            from pyodide.http import pyfetch
- 
-            # --- CONFIG: MATPLOTLIB ---
-            import matplotlib
-            matplotlib.use("Agg", force=True) 
-            import matplotlib.pyplot as plt
-            def no_op_show(*args, **kwargs): pass
-            plt.show = no_op_show
- 
-            # --- NEW: DB BRIDGE FUNCTION ---
-            # This function lets the user run: df = await query_db("SELECT * FROM table")
-            async def query_db(sql_query):
-                try:
-                    # Send SQL to main.py
-                    response = await pyfetch(
-                        url="/api/execute_sql",
-                        method="POST",
-                        headers={"Content-Type": "application/json"},
-                        body=json.dumps({"sql": sql_query})
-                    )
-                    resp_json = await response.json()
-                    if resp_json.get("status") == "error":
-                        print(f"❌ SQL Error: {resp_json.get('message')}")
-                        return None
-                    data = resp_json.get("data", [])
-                    # Convert List of Dicts -> Pandas DataFrame
-                    if data:
-                        return pd.DataFrame(data)
-                    else:
-                        print("✅ Query executed successfully (No rows returned).")
-                        return pd.DataFrame()
-                except Exception as e:
-                    print(f"⚠️ Network Error: {e}")
-                    return None
- 
-            # --- SETUP USER NAMESPACE ---
-            user_ns = {}
-            user_ns['__name__'] = '__main__'
-            user_ns['np'] = __import__('numpy')
-            user_ns['pd'] = __import__('pandas')
-            user_ns['plt'] = plt
-            # INJECT THE DB FUNCTION INTO USER SCOPE
-            user_ns['query_db'] = query_db
- 
-            def run_cell_logic(code_str):
-                stdout_capture = io.StringIO()
-                sys.stdout = stdout_capture
-                sys.stderr = stdout_capture
-                html_out = None
-                image_b64 = None
-                try:
-                    tree = ast.parse(code_str)
-                    last_node = tree.body[-1] if tree.body else None
-                    if isinstance(last_node, ast.Expr):
-                        exec(compile(ast.Module(body=tree.body[:-1], type_ignores=[]), "<string>", "exec"), user_ns)
-                        result = eval(compile(ast.Expression(body=last_node.value), "<string>", "eval"), user_ns)
-                        if hasattr(result, "_repr_html_"):
-                            html_out = result._repr_html_()
-                        elif result is not None:
-                            print(result)
-                    else:
-                        exec(code_str, user_ns)
- 
-                except Exception as e:
-                    print(f"Error: {e}")
-                finally:
-                    sys.stdout = sys.__stdout__
-                    sys.stderr = sys.__stderr__
- 
-                if plt.get_fignums():
-                    try:
-                        buf = io.BytesIO()
-                        plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)
-                        buf.seek(0)
-                        image_b64 = base64.b64encode(buf.read()).decode('utf-8')
-                    except Exception as e:
-                        print(f"Plotting Error: {e}")
-                    finally:
-                        plt.close('all')
-                        gc.collect()
- 
-                return {
-                    "text": stdout_capture.getvalue(),
-                    "html": html_out,
-                    "image": image_b64
-                }
-        `);
-
-        text.innerText = "Online";
-        dot.style.color = "#4ade80";
-        console.log("Pyodide Ready");
-    } catch (e) {
-        text.innerText = "Kernel Failed";
-        dot.style.color = "red";
-        console.error(e);
-    }
-}// --- script.js ---
 // --- script.js ---
 
 async function initPyodide() {
@@ -961,27 +842,17 @@ async function initPyodide() {
         await pyodide.runPythonAsync(`
 
             import sys
-
             import io
-
             import base64
-
             import json
-
             import gc
-
-            # --- FIX: Import Pandas HERE so query_db can see it ---
-
             import pandas as pd
 
             import numpy as np
- 
-            # HTTP Client
+
 
             from pyodide.http import pyfetch
  
-            # --- MATPLOTLIB SETUP ---
-
             import matplotlib
 
             matplotlib.use("Agg", force=True)
@@ -1107,51 +978,65 @@ async function initPyodide() {
 
 // Update window.onload to include initPyodide
 window.onload = () => {
-  addCodeCell();
-  checkStatus();
-  loadConnections();
-  initPyodide();
-  initAIWidget();
-  // Fresh page load starts as a NEW untitled notebook: no chats loaded.
-  currentNotebookId = 'notebook_' + Date.now();
-  currentNotebookName = null;
-  isNotebookSaved = false;
-  chats = [];
-  currentChatId = null;
-  chatHistory = [];
-  messagePairs = [];
-  persistActiveNotebookId();
-  renderChatList();
-  setInterval(checkStatus, 180000); // 3 minutes
+    addCodeCell();
+    checkStatus();
+    loadConnections();
+    initPyodide();
+    initAIWidget();
+    // Fresh page load starts as a NEW untitled notebook: no chats loaded.
+    currentNotebookId = 'notebook_' + Date.now();
+    currentNotebookName = null;
+    isNotebookSaved = false;
+    chats = [];
+    currentChatId = null;
+    chatHistory = [];
+    messagePairs = [];
+    persistActiveNotebookId();
+    renderChatList();
+    setInterval(checkStatus, 180000); // 3 minutes
 
-  document.getElementById("run-btn")?.addEventListener("click", runAIQuery);
-  document.addEventListener("click", (e) => {
-    const actionBtn = e.target.closest("[data-ai-proposal-action]");
-    if (!actionBtn) return;
-    if (!pendingCodeProposal) return;
+    document.getElementById("run-btn")?.addEventListener("click", runAIQuery);
+    document.addEventListener("click", (e) => {
+        const actionBtn = e.target.closest("[data-ai-proposal-action]");
+        if (!actionBtn) return;
+        if (!pendingCodeProposal) return;
 
-    const proposalId = actionBtn.getAttribute('data-ai-proposal-id');
-    if (proposalId !== pendingCodeProposal.proposalId) return;
+        const proposalId = actionBtn.getAttribute('data-ai-proposal-id');
+        if (proposalId !== pendingCodeProposal.proposalId) return;
 
-    const action = actionBtn.getAttribute('data-ai-proposal-action');
-    if (action === 'accept') {
-        applyPendingCodeProposal(false);
-    } else if (action === 'accept-run') {
-        applyPendingCodeProposal(true);
-    } else if (action === 'cancel') {
-        cancelPendingCodeProposal();
-    }
-  });
+        const action = actionBtn.getAttribute('data-ai-proposal-action');
+        if (action === 'accept') {
+            applyPendingCodeProposal(false);
+        } else if (action === 'accept-run') {
+            applyPendingCodeProposal(true);
+        } else if (action === 'cancel') {
+            cancelPendingCodeProposal();
+        }
+    });
 
 };
 
 
 // --- 2. NOTEBOOK KERNEL ---
 
+function updateLastActiveCell(cellId, newCode) {
+    if (!cellId) return;
+    const editorEl = document.querySelector(`#cell-${cellId} .code-editor`);
+    if (!editorEl) return;
+
+    if (editorEl.nextSibling && editorEl.nextSibling.classList && editorEl.nextSibling.classList.contains('CodeMirror')) {
+        const cm = editorEl.nextSibling.CodeMirror;
+        cm.setValue(newCode);
+    } else {
+        editorEl.value = newCode;
+    }
+}
+
 async function runCode(id) {
+    lastActiveCellId = id;
     const codeEditor = document.querySelector(`#cell-${id} .code-editor`);
     let code = '';
-    
+
     // Get code from CodeMirror if initialized, otherwise from textarea
     if (codeEditor.nextSibling && codeEditor.nextSibling.classList && codeEditor.nextSibling.classList.contains('CodeMirror')) {
         const cm = codeEditor.nextSibling.CodeMirror;
@@ -1159,13 +1044,21 @@ async function runCode(id) {
     } else {
         code = codeEditor.value;
     }
-    
+
     const outDiv = document.getElementById(`out-${id}`);
     const btn = document.getElementById(`btn-${id}`);
     if (!pyodide) { outDiv.innerText = "⚠️ Kernel loading..."; return; }
 
     btn.innerHTML = ICON_LOADER;
     outDiv.innerHTML = ""; // Clear output
+
+    // Clear previous highlights
+    if (codeEditor.nextSibling && codeEditor.nextSibling.classList && codeEditor.nextSibling.classList.contains('CodeMirror')) {
+        const cm = codeEditor.nextSibling.CodeMirror;
+        codeEditor.parentElement.querySelectorAll('.cm-new-code-highlight').forEach(el => {
+            el.classList.remove('cm-new-code-highlight');
+        });
+    }
 
     // 1. Capture Python Print Statements
     // We direct them straight to the div
@@ -1178,6 +1071,22 @@ async function runCode(id) {
     pyodide.setStdout({ batched: printHandler });
     pyodide.setStderr({ batched: printHandler });
 
+    const flushOutput = () => {
+        try {
+            pyodide.runPython("import sys\nif hasattr(sys, 'stdout') and hasattr(sys.stdout, 'write'): sys.stdout.write('\\n')\nif hasattr(sys, 'stderr') and hasattr(sys.stderr, 'write'): sys.stderr.write('\\n')");
+            let checkCount = 0;
+            let pNode = outDiv.lastChild;
+            while (pNode && checkCount < 2) {
+                let prevNode = pNode.previousSibling;
+                if (pNode.tagName === 'PRE' && pNode.innerText === '') {
+                    outDiv.removeChild(pNode);
+                }
+                pNode = prevNode;
+                checkCount++;
+            }
+        } catch (err) { }
+    };
+
     try {
         await pyodide.loadPackagesFromImports(code);
 
@@ -1186,6 +1095,8 @@ async function runCode(id) {
         let result = await pyodide.runPythonAsync(code, {
             globals: pyodide.globals.get("user_ns")
         });
+
+        flushOutput();
 
         // 3. Handle "Last Line Value" (like Jupyter)
         if (result !== undefined && result !== null) {
@@ -1221,6 +1132,7 @@ async function runCode(id) {
         updateSuggestionChips(getSuggestionsForCode(code, false, hasPlot, hasDF));
 
     } catch (e) {
+        flushOutput();
         outDiv.innerHTML += `<div style="color:#ef4444; margin-top:5px;"><strong>Error:</strong> ${e.message}</div>`;
         // Show error-specific suggestion chips
         updateSuggestionChips(getSuggestionsForCode(code, true, false, false));
@@ -1275,8 +1187,8 @@ function addCodeCell(button) {
     // Auto-focus the new text area
     setTimeout(() => {
         const ta = document.querySelector(`#cell-${cellCount} textarea`);
-        if (ta) { 
-            autoResize(ta); 
+        if (ta) {
+            autoResize(ta);
             // Initialize CodeMirror for syntax highlighting
             const editor = initCodeMirror(ta);
             if (editor) {
@@ -1292,26 +1204,26 @@ function addCodeCell(button) {
 
 
 function shouldShowCodeForPrompt(promptText = "") {
-  const p = promptText.toLowerCase();
+    const p = promptText.toLowerCase();
 
-  // If user explicitly wants explanation, hide code by default
-  const explainIntent =
-    p.includes("explain") ||
-    p.includes("explanation") ||
-    p.includes("describe") ||
-    p.includes("meaning") ||
-    p.includes("what does") ||
-    p.includes("how does");
+    // If user explicitly wants explanation, hide code by default
+    const explainIntent =
+        p.includes("explain") ||
+        p.includes("explanation") ||
+        p.includes("describe") ||
+        p.includes("meaning") ||
+        p.includes("what does") ||
+        p.includes("how does");
 
-  // If user explicitly asks for code, allow it
-  const codeIntent =
-    p.includes("code") ||
-    p.includes("give me code") ||
-    p.includes("write code") ||
-    p.includes("generate code") ||
-    p.includes("example code");
+    // If user explicitly asks for code, allow it
+    const codeIntent =
+        p.includes("code") ||
+        p.includes("give me code") ||
+        p.includes("write code") ||
+        p.includes("generate code") ||
+        p.includes("example code");
 
-  return codeIntent ? true : !explainIntent;
+    return codeIntent ? true : !explainIntent;
 }
 
 
@@ -1329,141 +1241,141 @@ function shouldShowCodeForPrompt(promptText = "") {
  * @param {Array<{label: string, prompt: string, icon?: string}>} chips
  */
 function updateSuggestionChips(chips) {
-  const container = document.getElementById("ai-suggestion-chips");
-  if (!container) return;
-  container.innerHTML = "";
+    const container = document.getElementById("ai-suggestion-chips");
+    if (!container) return;
+    container.innerHTML = "";
 
-  if (!chips || chips.length === 0) return;
+    if (!chips || chips.length === 0) return;
 
-  chips.forEach((chip) => {
-    const btn = document.createElement("button");
-    btn.className = "ai-suggestion-chip";
-    btn.type = "button";
-    btn.innerHTML = `<span class="chip-icon">${chip.icon || "✨"}</span>${chip.label}`;
-    btn.addEventListener("click", () => {
-      const input = document.getElementById("prompt-input");
-      if (input) {
-        input.value = chip.prompt;
-        input.style.height = "auto";
-        input.style.height = Math.min(input.scrollHeight, 140) + "px";
-      }
-      // Clear chips and auto-send
-      container.innerHTML = "";
-      runAIQuery();
+    chips.forEach((chip) => {
+        const btn = document.createElement("button");
+        btn.className = "ai-suggestion-chip";
+        btn.type = "button";
+        btn.innerHTML = `<span class="chip-icon">${chip.icon || "✨"}</span>${chip.label}`;
+        btn.addEventListener("click", () => {
+            const input = document.getElementById("prompt-input");
+            if (input) {
+                input.value = chip.prompt;
+                input.style.height = "auto";
+                input.style.height = Math.min(input.scrollHeight, 140) + "px";
+            }
+            // Clear chips and auto-send
+            container.innerHTML = "";
+            runAIQuery();
+        });
+        container.appendChild(btn);
     });
-    container.appendChild(btn);
-  });
 }
 
 /**
  * Get context-aware suggestions based on uploaded file type.
  */
 function getSuggestionsForFile(fileName) {
-  const ext = fileName.split(".").pop().toLowerCase();
-  const name = fileName.length > 20 ? fileName.substring(0, 17) + "..." : fileName;
+    const ext = fileName.split(".").pop().toLowerCase();
+    const name = fileName.length > 20 ? fileName.substring(0, 17) + "..." : fileName;
 
-  const suggestions = {
-    csv: [
-      { label: "Load into DataFrame", prompt: `Load the uploaded CSV file "${fileName}" into a Pandas DataFrame and display it.`, icon: "📊" },
-      { label: "Show first 5 rows", prompt: `Show the first 5 rows of the uploaded file "${fileName}".`, icon: "👀" },
-      { label: "Describe the dataset", prompt: `Describe the dataset in "${fileName}" — show statistics, column types, and missing values.`, icon: "📈" },
-      { label: "Plot a chart", prompt: `Create a suitable visualization chart for the data in "${fileName}".`, icon: "📉" },
-    ],
-    xlsx: [
-      { label: "Load into DataFrame", prompt: `Load the uploaded Excel file "${fileName}" into a Pandas DataFrame.`, icon: "📊" },
-      { label: "Show first 5 rows", prompt: `Show the first 5 rows of the Excel file "${fileName}".`, icon: "👀" },
-      { label: "List all sheets", prompt: `List all sheet names in the Excel file "${fileName}".`, icon: "📋" },
-      { label: "Describe the dataset", prompt: `Describe the data in "${fileName}" — statistics and column info.`, icon: "📈" },
-    ],
-    xls: null, // Will fallback to xlsx
-    json: [
-      { label: "Parse this JSON", prompt: `Parse the uploaded JSON file "${fileName}" and display its structure.`, icon: "🔧" },
-      { label: "Show the structure", prompt: `Show the keys and structure of the JSON file "${fileName}".`, icon: "🗂️" },
-      { label: "Convert to DataFrame", prompt: `Convert the JSON file "${fileName}" to a Pandas DataFrame.`, icon: "📊" },
-      { label: "Extract specific fields", prompt: `What fields are available in "${fileName}"? Help me extract specific data.`, icon: "🔍" },
-    ],
-    pdf: [
-      { label: "Summarize this document", prompt: `Summarize the uploaded document "${fileName}".`, icon: "📝" },
-      { label: "List key points", prompt: `List the key points from "${fileName}".`, icon: "📌" },
-      { label: "What is this about?", prompt: `What is the document "${fileName}" about?`, icon: "❓" },
-      { label: "Extract specific info", prompt: `Help me find specific information in "${fileName}".`, icon: "🔍" },
-    ],
-    docx: null, // Will fallback to pdf
-    txt: null,  // Will fallback to pdf
-  };
+    const suggestions = {
+        csv: [
+            { label: "Load into DataFrame", prompt: `Load the uploaded CSV file "${fileName}" into a Pandas DataFrame and display it.`, icon: "📊" },
+            { label: "Show first 5 rows", prompt: `Show the first 5 rows of the uploaded file "${fileName}".`, icon: "👀" },
+            { label: "Describe the dataset", prompt: `Describe the dataset in "${fileName}" — show statistics, column types, and missing values.`, icon: "📈" },
+            { label: "Plot a chart", prompt: `Create a suitable visualization chart for the data in "${fileName}".`, icon: "📉" },
+        ],
+        xlsx: [
+            { label: "Load into DataFrame", prompt: `Load the uploaded Excel file "${fileName}" into a Pandas DataFrame.`, icon: "📊" },
+            { label: "Show first 5 rows", prompt: `Show the first 5 rows of the Excel file "${fileName}".`, icon: "👀" },
+            { label: "List all sheets", prompt: `List all sheet names in the Excel file "${fileName}".`, icon: "📋" },
+            { label: "Describe the dataset", prompt: `Describe the data in "${fileName}" — statistics and column info.`, icon: "📈" },
+        ],
+        xls: null, // Will fallback to xlsx
+        json: [
+            { label: "Parse this JSON", prompt: `Parse the uploaded JSON file "${fileName}" and display its structure.`, icon: "🔧" },
+            { label: "Show the structure", prompt: `Show the keys and structure of the JSON file "${fileName}".`, icon: "🗂️" },
+            { label: "Convert to DataFrame", prompt: `Convert the JSON file "${fileName}" to a Pandas DataFrame.`, icon: "📊" },
+            { label: "Extract specific fields", prompt: `What fields are available in "${fileName}"? Help me extract specific data.`, icon: "🔍" },
+        ],
+        pdf: [
+            { label: "Summarize this document", prompt: `Summarize the uploaded document "${fileName}".`, icon: "📝" },
+            { label: "List key points", prompt: `List the key points from "${fileName}".`, icon: "📌" },
+            { label: "What is this about?", prompt: `What is the document "${fileName}" about?`, icon: "❓" },
+            { label: "Extract specific info", prompt: `Help me find specific information in "${fileName}".`, icon: "🔍" },
+        ],
+        docx: null, // Will fallback to pdf
+        txt: null,  // Will fallback to pdf
+    };
 
-  // Fallbacks
-  if (!suggestions[ext] && (ext === "xls")) return suggestions["xlsx"];
-  if (!suggestions[ext] && (ext === "docx" || ext === "txt")) return suggestions["pdf"];
+    // Fallbacks
+    if (!suggestions[ext] && (ext === "xls")) return suggestions["xlsx"];
+    if (!suggestions[ext] && (ext === "docx" || ext === "txt")) return suggestions["pdf"];
 
-  return suggestions[ext] || [
-    { label: "Analyze this file", prompt: `Analyze the uploaded file "${fileName}".`, icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>' },
-    { label: "What's in this file?", prompt: `What is in the uploaded file "${fileName}"?`, icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 2-3 4"></path><line x1="12" y1="17" x2="12" y2="17"></line></svg>' },
-  ];
+    return suggestions[ext] || [
+        { label: "Analyze this file", prompt: `Analyze the uploaded file "${fileName}".`, icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>' },
+        { label: "What's in this file?", prompt: `What is in the uploaded file "${fileName}"?`, icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 2-3 4"></path><line x1="12" y1="17" x2="12" y2="17"></line></svg>' },
+    ];
 }
 
 /**
  * Get context-aware suggestions based on executed code.
  */
 function getSuggestionsForCode(code, hasError, hasPlot, hasDataFrame) {
-  const codeLower = code.toLowerCase();
+    const codeLower = code.toLowerCase();
 
-  // Error case — highest priority
-  if (hasError) {
+    // Error case — highest priority
+    if (hasError) {
+        return [
+            { label: "Fix this error", prompt: "Fix the error in the code I just ran.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 L11 13"></path><path d="M14.5 2.5a9 9 0 1 1-12.7 12.7L11 13"></path></svg>' },
+            { label: "Explain what went wrong", prompt: "Explain why my code produced an error and how to fix it.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 2-3 4"></path><line x1="12" y1="17" x2="12" y2="17"></line></svg>' },
+            { label: "Try alternative approach", prompt: "Suggest an alternative approach to achieve the same result without the error.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="10" rx="2"></rect><path d="M7 7v-2a5 5 0 0 1 10 0v2"></path></svg>' },
+        ];
+    }
+
+    // Plot/visualization case
+    if (hasPlot || codeLower.includes("plt.") || codeLower.includes("matplotlib") || codeLower.includes(".plot(")) {
+        return [
+            { label: "Save this plot", prompt: "Save the plot I just generated as a PNG file.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h11l5 5v9a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline></svg>' },
+            { label: "Change color scheme", prompt: "Change the color scheme of my plot to make it more visually appealing.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a10 10 0 0 1 10 10"></path></svg>' },
+            { label: "Add title & labels", prompt: "Add a proper title, axis labels, and legend to my plot.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"></path></svg>' },
+            { label: "Explain this visualization", prompt: "Explain what this visualization shows about the data.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"></path><path d="M18 13v6"></path><path d="M13 8v11"></path><path d="M8 16v3"></path></svg>' },
+        ];
+    }
+
+    // DataFrame/pandas case
+    if (hasDataFrame || codeLower.includes("import pandas") || codeLower.includes("pd.read") || codeLower.includes("dataframe")) {
+        return [
+            { label: "Show column types", prompt: "Show the data types and info for all columns in my DataFrame.", icon: "📋" },
+            { label: "Handle missing values", prompt: "Check for and handle any missing values in my DataFrame.", icon: "🔧" },
+            { label: "Plot distribution", prompt: "Plot the distribution of numerical columns in my DataFrame.", icon: "📈" },
+            { label: "Generate summary stats", prompt: "Generate descriptive statistics for my DataFrame.", icon: "📊" },
+        ];
+    }
+
+    // General code execution
     return [
-      { label: "Fix this error", prompt: "Fix the error in the code I just ran.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 L11 13"></path><path d="M14.5 2.5a9 9 0 1 1-12.7 12.7L11 13"></path></svg>' },
-      { label: "Explain what went wrong", prompt: "Explain why my code produced an error and how to fix it.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 2-3 4"></path><line x1="12" y1="17" x2="12" y2="17"></line></svg>' },
-      { label: "Try alternative approach", prompt: "Suggest an alternative approach to achieve the same result without the error.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="10" rx="2"></rect><path d="M7 7v-2a5 5 0 0 1 10 0v2"></path></svg>' },
+        { label: "Explain this output", prompt: "Explain the output of the code I just ran.", icon: "💡" },
+        { label: "Optimize this code", prompt: "Suggest optimizations for the code I just ran.", icon: "⚡" },
+        { label: "Add error handling", prompt: "Add proper error handling to my code.", icon: "🛡️" },
     ];
-  }
-
-  // Plot/visualization case
-  if (hasPlot || codeLower.includes("plt.") || codeLower.includes("matplotlib") || codeLower.includes(".plot(")) {
-    return [
-      { label: "Save this plot", prompt: "Save the plot I just generated as a PNG file.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h11l5 5v9a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline></svg>' },
-      { label: "Change color scheme", prompt: "Change the color scheme of my plot to make it more visually appealing.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a10 10 0 0 1 10 10"></path></svg>' },
-      { label: "Add title & labels", prompt: "Add a proper title, axis labels, and legend to my plot.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"></path></svg>' },
-      { label: "Explain this visualization", prompt: "Explain what this visualization shows about the data.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"></path><path d="M18 13v6"></path><path d="M13 8v11"></path><path d="M8 16v3"></path></svg>' },
-    ];
-  }
-
-  // DataFrame/pandas case
-  if (hasDataFrame || codeLower.includes("import pandas") || codeLower.includes("pd.read") || codeLower.includes("dataframe")) {
-    return [
-      { label: "Show column types", prompt: "Show the data types and info for all columns in my DataFrame.", icon: "📋" },
-      { label: "Handle missing values", prompt: "Check for and handle any missing values in my DataFrame.", icon: "🔧" },
-      { label: "Plot distribution", prompt: "Plot the distribution of numerical columns in my DataFrame.", icon: "📈" },
-      { label: "Generate summary stats", prompt: "Generate descriptive statistics for my DataFrame.", icon: "📊" },
-    ];
-  }
-
-  // General code execution
-  return [
-    { label: "Explain this output", prompt: "Explain the output of the code I just ran.", icon: "💡" },
-    { label: "Optimize this code", prompt: "Suggest optimizations for the code I just ran.", icon: "⚡" },
-    { label: "Add error handling", prompt: "Add proper error handling to my code.", icon: "🛡️" },
-  ];
 }
 
 // ======================================================
 
 function setAILoading(isLoading) {
-  const sendBtn = document.getElementById("run-btn");
-  const sendIcon = document.getElementById("send-icon");
-  const stopIcon = document.getElementById("stop-icon");
-  if (!sendBtn || !sendIcon || !stopIcon) return;
+    const sendBtn = document.getElementById("run-btn");
+    const sendIcon = document.getElementById("send-icon");
+    const stopIcon = document.getElementById("stop-icon");
+    if (!sendBtn || !sendIcon || !stopIcon) return;
 
-  if (isLoading) {
-    sendBtn.classList.add("is-loading");
-    sendIcon.style.display = "none";
-    stopIcon.style.display = "block";
-    sendBtn.setAttribute("aria-label", "Stop");
-  } else {
-    sendBtn.classList.remove("is-loading");
-    sendIcon.style.display = "block";
-    stopIcon.style.display = "none";
-    sendBtn.setAttribute("aria-label", "Send");
-  }
+    if (isLoading) {
+        sendBtn.classList.add("is-loading");
+        sendIcon.style.display = "none";
+        stopIcon.style.display = "block";
+        sendBtn.setAttribute("aria-label", "Stop");
+    } else {
+        sendBtn.classList.remove("is-loading");
+        sendIcon.style.display = "block";
+        stopIcon.style.display = "none";
+        sendBtn.setAttribute("aria-label", "Send");
+    }
 }
 
 // ======================================================
@@ -1474,17 +1386,17 @@ function setAILoading(isLoading) {
  * Add edit button to a user message bubble
  */
 function addEditButton(userBubble, prompt, messageIndex) {
-  // Check if edit button already exists
-  if (userBubble.querySelector('.edit-message-btn')) return;
-  
-  const editBtn = document.createElement('button');
-  editBtn.className = 'edit-message-btn';
-  editBtn.type = 'button';
-  editBtn.title = 'Edit message';
-  editBtn.innerHTML = ICON_EDIT_MESSAGE;
-  editBtn.addEventListener('click', () => editMessage(messageIndex));
-  
-  userBubble.appendChild(editBtn);
+    // Check if edit button already exists
+    if (userBubble.querySelector('.edit-message-btn')) return;
+
+    const editBtn = document.createElement('button');
+    editBtn.className = 'edit-message-btn';
+    editBtn.type = 'button';
+    editBtn.title = 'Edit message';
+    editBtn.innerHTML = ICON_EDIT_MESSAGE;
+    editBtn.addEventListener('click', () => editMessage(messageIndex));
+
+    userBubble.appendChild(editBtn);
 }
 
 /**
@@ -1492,17 +1404,17 @@ function addEditButton(userBubble, prompt, messageIndex) {
  * Called internally — safe to call even if no edit is active.
  */
 function cancelInlineEdit(messageIndex) {
-  const pair = messagePairs[messageIndex];
-  if (!pair || !pair.userBubble) return;
+    const pair = messagePairs[messageIndex];
+    if (!pair || !pair.userBubble) return;
 
-  const bubble = pair.userBubble;
-  bubble.classList.remove('editing');
+    const bubble = pair.userBubble;
+    bubble.classList.remove('editing');
 
-  // Restore original text + edit button
-  bubble.innerText = pair.prompt;
-  addEditButton(bubble, pair.prompt, messageIndex);
+    // Restore original text + edit button
+    bubble.innerText = pair.prompt;
+    addEditButton(bubble, pair.prompt, messageIndex);
 
-  editingMessageIndex = null;
+    editingMessageIndex = null;
 }
 
 /**
@@ -1511,120 +1423,120 @@ function cancelInlineEdit(messageIndex) {
  * No messages are removed; chat history stays intact.
  */
 function editMessage(messageIndex) {
-  const messagePair = messagePairs[messageIndex];
-  if (!messagePair || !messagePair.userBubble) return;
+    const messagePair = messagePairs[messageIndex];
+    if (!messagePair || !messagePair.userBubble) return;
 
-  // If another message is already being edited, cancel it first
-  if (editingMessageIndex !== null && editingMessageIndex !== messageIndex) {
-    cancelInlineEdit(editingMessageIndex);
-  }
+    // If another message is already being edited, cancel it first
+    if (editingMessageIndex !== null && editingMessageIndex !== messageIndex) {
+        cancelInlineEdit(editingMessageIndex);
+    }
 
-  // If this message is already in edit mode, do nothing
-  if (editingMessageIndex === messageIndex) return;
+    // If this message is already in edit mode, do nothing
+    if (editingMessageIndex === messageIndex) return;
 
-  // If AI is currently generating, stop it first
-  if (currentAbortController) {
-    currentAbortController.abort();
-    currentAbortController = null;
-    setAILoading(false);
-  }
+    // If AI is currently generating, stop it first
+    if (currentAbortController) {
+        currentAbortController.abort();
+        currentAbortController = null;
+        setAILoading(false);
+    }
 
-  editingMessageIndex = messageIndex;
-  const bubble = messagePair.userBubble;
-  const originalText = messagePair.prompt;
+    editingMessageIndex = messageIndex;
+    const bubble = messagePair.userBubble;
+    const originalText = messagePair.prompt;
 
-  // Mark bubble as editing (hides pencil icon via CSS)
-  bubble.classList.add('editing');
-  bubble.innerHTML = '';
-
-  // ── Textarea ────────────────────────────────────────────────────────────
-  const textarea = document.createElement('textarea');
-  textarea.className = 'inline-edit-textarea';
-  textarea.value = originalText;
-  textarea.rows = 1;
-
-  const resizeTA = () => {
-    textarea.style.height = 'auto';
-    textarea.style.height = textarea.scrollHeight + 'px';
-  };
-  textarea.addEventListener('input', resizeTA);
-
-  // ── Action buttons ──────────────────────────────────────────────────────
-  const actions = document.createElement('div');
-  actions.className = 'inline-edit-actions';
-
-  // Send button — uses existing .notebook-btn styling
-  const sendBtn = document.createElement('button');
-  sendBtn.type = 'button';
-  sendBtn.className = 'notebook-btn';
-  sendBtn.title = 'Send (Ctrl+Enter)';
-  sendBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Send`;
-
-  sendBtn.addEventListener('click', async () => {
-    const newText = textarea.value.trim();
-    if (!newText) return;
-
-    // ── 1. Exit edit mode, update bubble ───────────────────────────────
-    bubble.classList.remove('editing');
+    // Mark bubble as editing (hides pencil icon via CSS)
+    bubble.classList.add('editing');
     bubble.innerHTML = '';
-    bubble.innerText = newText;
-    addEditButton(bubble, newText, messageIndex);
-    editingMessageIndex = null;
 
-    // ── 2. Remove all messages AFTER this one from DOM ─────────────────
-    for (let i = messageIndex + 1; i < messagePairs.length; i++) {
-      const pair = messagePairs[i];
-      if (pair.userBubble?.parentNode)      pair.userBubble.remove();
-      if (pair.assistantBubble?.parentNode) pair.assistantBubble.remove();
-    }
+    // ── Textarea ────────────────────────────────────────────────────────────
+    const textarea = document.createElement('textarea');
+    textarea.className = 'inline-edit-textarea';
+    textarea.value = originalText;
+    textarea.rows = 1;
 
-    // Also remove the assistant bubble that belonged to this pair
-    if (messagePair.assistantBubble?.parentNode) {
-      messagePair.assistantBubble.remove();
-      messagePair.assistantBubble = null;
-    }
+    const resizeTA = () => {
+        textarea.style.height = 'auto';
+        textarea.style.height = textarea.scrollHeight + 'px';
+    };
+    textarea.addEventListener('input', resizeTA);
 
-    // ── 3. Slice arrays to edited index ───────────────────────────────
-    messagePairs.splice(messageIndex + 1);           // keep [0..messageIndex]
-    messagePair.prompt = newText;
-    const chatStartIndex = messageIndex * 2;         // first relevant history entry
-    chatHistory.splice(chatStartIndex);              // trim history here and beyond
+    // ── Action buttons ──────────────────────────────────────────────────────
+    const actions = document.createElement('div');
+    actions.className = 'inline-edit-actions';
 
-    // ── 4. Regenerate AI response ──────────────────────────────────────
-    await runEditedQuery(newText, messageIndex);
-  });
+    // Send button — uses existing .notebook-btn styling
+    const sendBtn = document.createElement('button');
+    sendBtn.type = 'button';
+    sendBtn.className = 'notebook-btn';
+    sendBtn.title = 'Send (Ctrl+Enter)';
+    sendBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Send`;
 
-  // Cancel button — uses existing .notebook-btn styling
-  const cancelBtn = document.createElement('button');
-  cancelBtn.type = 'button';
-  cancelBtn.className = 'notebook-btn';
-  cancelBtn.title = 'Cancel (Escape)';
-  cancelBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg> Cancel`;
-  cancelBtn.addEventListener('click', () => cancelInlineEdit(messageIndex));
+    sendBtn.addEventListener('click', async () => {
+        const newText = textarea.value.trim();
+        if (!newText) return;
 
-  // Keyboard shortcuts: Escape = cancel, Ctrl+Enter = send
-  textarea.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      cancelInlineEdit(messageIndex);
-    } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      sendBtn.click();
-    }
-  });
+        // ── 1. Exit edit mode, update bubble ───────────────────────────────
+        bubble.classList.remove('editing');
+        bubble.innerHTML = '';
+        bubble.innerText = newText;
+        addEditButton(bubble, newText, messageIndex);
+        editingMessageIndex = null;
 
-  actions.appendChild(sendBtn);
-  actions.appendChild(cancelBtn);
+        // ── 2. Remove all messages AFTER this one from DOM ─────────────────
+        for (let i = messageIndex + 1; i < messagePairs.length; i++) {
+            const pair = messagePairs[i];
+            if (pair.userBubble?.parentNode) pair.userBubble.remove();
+            if (pair.assistantBubble?.parentNode) pair.assistantBubble.remove();
+        }
 
-  bubble.appendChild(textarea);
-  bubble.appendChild(actions);
+        // Also remove the assistant bubble that belonged to this pair
+        if (messagePair.assistantBubble?.parentNode) {
+            messagePair.assistantBubble.remove();
+            messagePair.assistantBubble = null;
+        }
 
-  // Auto-resize + focus
-  requestAnimationFrame(() => {
-    resizeTA();
-    textarea.focus();
-    textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
-  });
+        // ── 3. Slice arrays to edited index ───────────────────────────────
+        messagePairs.splice(messageIndex + 1);           // keep [0..messageIndex]
+        messagePair.prompt = newText;
+        const chatStartIndex = messageIndex * 2;         // first relevant history entry
+        chatHistory.splice(chatStartIndex);              // trim history here and beyond
+
+        // ── 4. Regenerate AI response ──────────────────────────────────────
+        await runEditedQuery(newText, messageIndex);
+    });
+
+    // Cancel button — uses existing .notebook-btn styling
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'notebook-btn';
+    cancelBtn.title = 'Cancel (Escape)';
+    cancelBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg> Cancel`;
+    cancelBtn.addEventListener('click', () => cancelInlineEdit(messageIndex));
+
+    // Keyboard shortcuts: Escape = cancel, Ctrl+Enter = send
+    textarea.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            cancelInlineEdit(messageIndex);
+        } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            sendBtn.click();
+        }
+    });
+
+    actions.appendChild(sendBtn);
+    actions.appendChild(cancelBtn);
+
+    bubble.appendChild(textarea);
+    bubble.appendChild(actions);
+
+    // Auto-resize + focus
+    requestAnimationFrame(() => {
+        resizeTA();
+        textarea.focus();
+        textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
+    });
 }
 
 
@@ -1640,140 +1552,142 @@ function editMessage(messageIndex) {
  * @param {number}  messageIndex  Index in messagePairs for this message
  */
 async function runEditedQuery(prompt, messageIndex) {
-  const contentArea = document.getElementById('ai-content-area');
-  const tray        = document.getElementById('ai-response-tray');
-  if (!contentArea) return;
+    const contentArea = document.getElementById('ai-content-area');
+    const tray = document.getElementById('ai-response-tray');
+    if (!contentArea) return;
 
-  // Collect notebook context
-  const cells = Array.from(document.querySelectorAll('.code-editor, .text-editor'))
-    .map(el => (el.value !== undefined ? el.value : el.innerHTML));
+    // Collect notebook context
+    const cells = Array.from(document.querySelectorAll('.code-editor, .text-editor'))
+        .map(el => (el.value !== undefined ? el.value : el.innerHTML));
 
-  let activeVars = [];
-  if (pyodide) {
-    try {
-      const keys = pyodide.runPython('list(userns.keys())').toJs();
-      activeVars = keys.filter(k => !k.startsWith('_') && !['pd','np','plt','querydb'].includes(k));
-    } catch (_) {}
-  }
-
-  // Timer
-  const startTime = Date.now();
-  const timerEl   = document.createElement('span');
-  timerEl.style.cssText = "margin-left:auto;font-family:'Fira Code', monospace;font-size:0.85rem;color:#64748b;";
-  timerEl.innerText = '0.0s';
-
-  // ── Assistant placeholder bubble ──────────────────────────────────────
-  const assistantBubble = document.createElement('div');
-  assistantBubble.className = 'ai-msg assistant';
-  assistantBubble.style.padding     = '12px 10px 12px 16px'; // Reduced
-  assistantBubble.style.background  = '#ffffff';
-  assistantBubble.style.border      = '1px solid #e6edf3';
-  assistantBubble.style.borderRadius= '10px';
-  assistantBubble.style.margin      = '6px 0'; // Tighter
-  assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><span class="pulse-icon"></span><strong>Assistant</strong></div><div style="margin-top:8px;color:#64748b;">Generating response... </div>`;
-  assistantBubble.querySelector('div').appendChild(timerEl);
-  contentArea.appendChild(assistantBubble);
-
-  // Update messagePairs entry (index already trimmed to messageIndex)
-  messagePairs[messageIndex].assistantBubble = assistantBubble;
-
-  if (tray) tray.scrollTop = tray.scrollHeight;
-
-  const timerInt = setInterval(() => {
-    timerEl.innerText = ((Date.now() - startTime) / 1000).toFixed(1) + 's';
-  }, 100);
-
-  setAILoading(true);
-  currentAbortController = new AbortController();
-
-  try {
-    const resp = await fetch('query', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        prompt,
-        notebook_cells: cells,
-        variables:      activeVars,
-        chat_history:   chatHistory   // already trimmed to pre-edit point
-      }),
-      signal: currentAbortController.signal,
-    });
-
-    if (!resp.ok) throw new Error('Server Error');
-
-    const data       = await resp.json();
-    clearInterval(timerInt);
-    const totalTime  = ((Date.now() - startTime) / 1000).toFixed(2);
-    const toolUsed   = data.tool_used || '';
-    let   answer     = data.answer    || '';
-
-    // Title: set once from FIRST user message only.
-    if (currentChatId && typeof updateChatTitleFromFirstUserMessage === 'function') {
-      updateChatTitleFromFirstUserMessage(currentChatId, prompt);
+    let activeVars = [];
+    if (pyodide) {
+        try {
+            const keys = pyodide.runPython('list(userns.keys())').toJs();
+            activeVars = keys.filter(k => !k.startsWith('_') && !['pd', 'np', 'plt', 'querydb'].includes(k));
+        } catch (_) { }
     }
 
-    // Persist to chatHistory
-    chatHistory.push({ role: 'user',      content: prompt });
-    chatHistory.push({ role: 'assistant', content: answer });
+    // Timer
+    const startTime = Date.now();
+    const timerEl = document.createElement('span');
+    timerEl.style.cssText = "margin-left:auto;font-family:'Fira Code', monospace;font-size:0.85rem;color:#64748b;";
+    timerEl.innerText = '0.0s';
 
-    // Code block handling (mirrors runAIQuery)
-    let codeNode = null;
-    const originalAnswer    = answer;
-    const isGenerateIntent  = toolUsed.toUpperCase().includes('GENERATE');
-    const codeMatch         = originalAnswer.match(/```python([\s\S]*?)```/);
+    // ── Assistant placeholder bubble ──────────────────────────────────────
+    const assistantBubble = document.createElement('div');
+    assistantBubble.className = 'ai-msg assistant';
+    assistantBubble.style.padding = '12px 10px 12px 16px'; // Reduced
+    assistantBubble.style.background = '#ffffff';
+    assistantBubble.style.border = '1px solid #e6edf3';
+    assistantBubble.style.borderRadius = '10px';
+    assistantBubble.style.margin = '6px 0'; // Tighter
+    assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><span class="pulse-icon"></span><strong>Assistant</strong></div><div style="margin-top:8px;color:#64748b;">Generating response... </div>`;
+    assistantBubble.querySelector('div').appendChild(timerEl);
+    contentArea.appendChild(assistantBubble);
 
-    if (codeMatch && isGenerateIntent) {
-      const code = codeMatch[1].trim();
-      if (!showCode) {
-        answer   = stripCodeBlocks(originalAnswer);
-        codeNode = null;
-      } else {
-        answer = originalAnswer.replace(codeMatch[0], '').trim();
-        codeNode = stageCodeProposalUI(code, prompt);
-      }
-    } else if (codeMatch && !isGenerateIntent) {
-      answer   = stripCodeBlocks(originalAnswer);
-      codeNode = null;
-    } else {
-      if (!showCode) answer = stripCodeBlocks(answer);
-    }
-
-    // Render final assistant bubble
-    assistantBubble.innerHTML = '';
-    const header = document.createElement('div');
-    header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px'; // Tighter
-    const titleEl = document.createElement('strong');
-    titleEl.innerText = 'Assistant';
-    const timeLabel = document.createElement('span');
-    timeLabel.style.cssText = 'color:#888;font-size:0.7rem'; // Smaller
-    timeLabel.innerText = `Took ${totalTime}s`;
-    header.appendChild(titleEl);
-    header.appendChild(timeLabel);
-
-    const body = document.createElement('div');
-    body.style.cssText = 'font-size:0.88rem;line-height:1.5'; // Shrunk from 0.95rem (~14px)
-    if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
-      body.innerHTML = DOMPurify.sanitize(marked.parse(answer || ''));
-    } else {
-      body.innerText = answer;
-    }
-
-    assistantBubble.appendChild(header);
-    assistantBubble.appendChild(body);
-    if (codeNode) assistantBubble.appendChild(codeNode);
+    // Update messagePairs entry (index already trimmed to messageIndex)
+    messagePairs[messageIndex].assistantBubble = assistantBubble;
 
     if (tray) tray.scrollTop = tray.scrollHeight;
 
-  } catch (e) {
-    clearInterval(timerInt);
-    if (e.name === 'AbortError') {
-      assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><strong>Assistant</strong></div><div style="margin-top:8px;color:#94a3b8;font-style:italic;">Response cancelled.</div>`;
-    } else {
-      assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><strong>Assistant</strong></div><div style="margin-top:8px;color:red;">Error: ${e.message}</div>`;
-    }
-  } finally {
-    currentAbortController = null;
-    setAILoading(false);
+    const timerInt = setInterval(() => {
+        timerEl.innerText = ((Date.now() - startTime) / 1000).toFixed(1) + 's';
+    }, 100);
+
+    setAILoading(true);
+    currentAbortController = new AbortController();
+
+    const reqPayload = {
+        prompt,
+        notebook_cells: cells,
+        variables: activeVars,
+        chat_history: chatHistory
+    };
+
+    try {
+        const resp = await fetch('query', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(reqPayload),
+            signal: currentAbortController.signal,
+        });
+
+        if (!resp.ok) throw new Error('Server Error');
+
+        const data = await resp.json();
+        clearInterval(timerInt);
+        const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
+        const toolUsed = data.tool_used || '';
+        let answer = data.answer || '';
+
+        // Title: set once from FIRST user message only.
+        if (currentChatId && typeof updateChatTitleFromFirstUserMessage === 'function') {
+            updateChatTitleFromFirstUserMessage(currentChatId, prompt);
+        }
+
+        // Persist to chatHistory
+        chatHistory.push({ role: 'user', content: prompt });
+        chatHistory.push({ role: 'assistant', content: answer });
+
+        // Code block handling (mirrors runAIQuery)
+        let codeNode = null;
+        const originalAnswer = answer;
+        const isGenerateIntent = toolUsed.toUpperCase().includes('GENERATE');
+        const codeMatch = originalAnswer.match(/```python([\s\S]*?)```/);
+
+        if (codeMatch && isGenerateIntent) {
+            const code = codeMatch[1].trim();
+            if (!showCode) {
+                answer = stripCodeBlocks(originalAnswer);
+                codeNode = null;
+            } else {
+                answer = originalAnswer.replace(codeMatch[0], '').trim();
+                codeNode = stageCodeProposalUI(code, prompt);
+            }
+        } else if (codeMatch && !isGenerateIntent) {
+            answer = stripCodeBlocks(originalAnswer);
+            codeNode = null;
+        } else {
+            if (!showCode) answer = stripCodeBlocks(answer);
+        }
+
+        // Render final assistant bubble
+        assistantBubble.innerHTML = '';
+        const header = document.createElement('div');
+        header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px'; // Tighter
+        const titleEl = document.createElement('strong');
+        titleEl.innerText = 'Assistant';
+        const timeLabel = document.createElement('span');
+        timeLabel.style.cssText = 'color:#888;font-size:0.7rem'; // Smaller
+        timeLabel.innerText = `Took ${totalTime}s`;
+        header.appendChild(titleEl);
+        header.appendChild(timeLabel);
+
+        const body = document.createElement('div');
+        body.style.cssText = 'font-size:0.88rem;line-height:1.5'; // Shrunk from 0.95rem (~14px)
+        if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
+            body.innerHTML = DOMPurify.sanitize(marked.parse(answer || ''));
+        } else {
+            body.innerText = answer;
+        }
+
+        assistantBubble.appendChild(header);
+        assistantBubble.appendChild(body);
+        if (codeNode) assistantBubble.appendChild(codeNode);
+
+        if (tray) tray.scrollTop = tray.scrollHeight;
+
+    } catch (e) {
+        clearInterval(timerInt);
+        if (e.name === 'AbortError') {
+            assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><strong>Assistant</strong></div><div style="margin-top:8px;color:#94a3b8;font-style:italic;">Response cancelled.</div>`;
+        } else {
+            assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><strong>Assistant</strong></div><div style="margin-top:8px;color:red;">Error: ${e.message}</div>`;
+        }
+    } finally {
+        currentAbortController = null;
+        setAILoading(false);
         // Persist final state
         if (!viewingHistoryItem) {
             if (typeof saveCurrentChat === 'function') saveCurrentChat();
@@ -1788,7 +1702,7 @@ async function runEditedQuery(prompt, messageIndex) {
                 }
             }
         }
-  }
+    }
 }
 
 
@@ -1810,58 +1724,82 @@ async function runEditedQuery(prompt, messageIndex) {
 // ======================================================
 
 async function runAIQuery() {
-  const input = document.getElementById("prompt-input");
-  const contentArea = document.getElementById("ai-content-area");
-  const tray = document.getElementById("ai-response-tray");
-  const mini = document.getElementById("ai-mini");
+    const input = document.getElementById("prompt-input");
+    const contentArea = document.getElementById("ai-content-area");
+    const tray = document.getElementById("ai-response-tray");
+    const mini = document.getElementById("ai-mini");
 
-  if (!input || !contentArea) return;
+    if (!input || !contentArea) return;
 
-  // If currently loading, abort
-  if (currentAbortController) {
-    currentAbortController.abort();
-    currentAbortController = null;
-    setAILoading(false);
-    return;
-  }
-
-  const prompt = input.value.trim();
-  if (!prompt && attachedFiles.length === 0) return;
-
-  // Safety: initialize a default chat if user sends before one exists.
-  if (!currentChatId && chats.length === 0 && typeof createNewChat === 'function') {
-    createNewChat();
-  }
-
-  // Ensure popup is open
-  if (mini) {
-    mini.classList.add("open");
-    mini.setAttribute("aria-hidden", "false");
-  }
-
-  // Collect context (same idea as your current code)
-  const cells = Array.from(document.querySelectorAll(".code-editor, .text-editor"))
-    .map((el) => (el.value !== undefined ? el.value : el.innerHTML));
-
-  // Variables from Pyodide namespace (keeps your existing approach)
-  let activeVars = [];
-  if (pyodide) {
-    try {
-      const keys = pyodide.runPython("list(userns.keys())").toJs();
-      activeVars = keys.filter(
-        (k) =>
-          !k.startsWith("_") &&
-          !["pd", "np", "plt", "querydb"].includes(k)
-      );
-    } catch (e) {
-      console.log("No vars yet");
+    // If currently loading, abort
+    if (currentAbortController) {
+        currentAbortController.abort();
+        currentAbortController = null;
+        setAILoading(false);
+        return;
     }
-  }
+
+    const prompt = input.value.trim();
+    if (!prompt && attachedFiles.length === 0) return;
+
+    // Safety: initialize a default chat if user sends before one exists.
+    if (!currentChatId && chats.length === 0 && typeof createNewChat === 'function') {
+        createNewChat();
+    }
+
+    // Ensure popup is open
+    if (mini) {
+        mini.classList.add("open");
+        mini.setAttribute("aria-hidden", "false");
+    }
+
+    // Collect context (same idea as your current code)
+    const cells = Array.from(document.querySelectorAll(".code-editor, .text-editor"))
+        .map((el) => (el.value !== undefined ? el.value : el.innerHTML));
+
+    // Variables from Pyodide namespace (keeps your existing approach)
+    let activeVars = [];
+    if (pyodide) {
+        try {
+            const keys = pyodide.runPython("list(userns.keys())").toJs();
+            activeVars = keys.filter(
+                (k) =>
+                    !k.startsWith("_") &&
+                    !["pd", "np", "plt", "querydb"].includes(k)
+            );
+        } catch (e) {
+            console.log("No vars yet");
+        }
+    }
 
     // UI: clear input immediately, add user message, and show assistant placeholder (chat style)
     input.value = "";
     if (typeof autoResize === "function") autoResize(input);
-    
+
+    // --- NEW: Convert Image Files and Data Files ---
+    let base64Images = [];
+    let uploadedTextFiles = []; // e.g. for CSV/JSON/TXT datasets
+
+    // Process attached files before sending
+    for (let file of attachedFiles) {
+        if (file.type && file.type.startsWith('image/')) {
+            const base64 = await new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = (e) => resolve(e.target.result);
+                reader.readAsDataURL(file); // Generates data:image/png;base64,...
+            });
+            base64Images.push(base64);
+        } else {
+            // Treat as text dataset
+            const textContent = await new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = (e) => resolve(e.target.result);
+                reader.readAsText(file);
+            });
+            uploadedTextFiles.push({ filename: file.name, content: textContent });
+        }
+    }
+
     const startTime = Date.now();
     const timerEl = document.createElement('span');
     timerEl.style.cssText = "margin-left:auto;font-family:'Fira Code', monospace;font-size:0.85rem;color:#64748b;";
@@ -1879,9 +1817,25 @@ async function runAIQuery() {
     userBubble.style.wordWrap = 'break-word';
     userBubble.style.whiteSpace = 'pre-wrap';
     userBubble.style.overflowWrap = 'break-word';
-    userBubble.innerText = prompt;
+
+    // Add text node
+    userBubble.appendChild(document.createTextNode(prompt));
+
+    // Add image thumbnails below text
+    if (base64Images.length > 0) {
+        const imgContainer = document.createElement('div');
+        imgContainer.style.cssText = 'margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;';
+        base64Images.forEach(imgSrc => {
+            const imgEl = document.createElement('img');
+            imgEl.src = imgSrc;
+            imgEl.style.cssText = 'max-width:200px; max-height:200px; border-radius:6px; border:1px solid #c7d2fe; object-fit:contain; background:white;';
+            imgContainer.appendChild(imgEl);
+        });
+        userBubble.appendChild(imgContainer);
+    }
+
     contentArea.appendChild(userBubble);
-    
+
     // Add edit button immediately to user message
     const messageIndex = messagePairs.length;
     messagePairs.push({ userBubble, assistantBubble: null, prompt }); // Add placeholder for assistant
@@ -1899,7 +1853,7 @@ async function runAIQuery() {
     // add timer to the header
     assistantBubble.querySelector('div').appendChild(timerEl);
     contentArea.appendChild(assistantBubble);
-    
+
     // IMPORTANT: Update messagePair with assistantBubble immediately so it can be removed if user clicks edit
     messagePairs[messageIndex].assistantBubble = assistantBubble;
 
@@ -1910,26 +1864,46 @@ async function runAIQuery() {
         timerEl.innerText = ((Date.now() - startTime) / 1000).toFixed(1) + 's';
     }, 100);
 
-  try {
-    // IMPORTANT: keep the SAME endpoint string you used earlier.
-    // If your old code had fetch("/query"...), use "/query". If it had fetch("query"...), use "query".
-    const endpoint = "query";
+    try {
+        // IMPORTANT: keep the SAME endpoint string you used earlier.
+        // If your old code had fetch("/query"...), use "/query". If it had fetch("query"...), use "query".
+        const endpoint = "query";
 
-    // Create abort controller for this request
-    currentAbortController = new AbortController();
-    setAILoading(true);
+        // Create abort controller for this request
+        currentAbortController = new AbortController();
+        setAILoading(true);
 
-    const resp = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prompt: prompt,
-        notebook_cells: cells,
-        variables: activeVars,
-        chat_history: chatHistory
-      }),
-      signal: currentAbortController.signal,
-    });
+        let reqPayload = {
+            prompt: prompt,
+            notebook_cells: cells,
+            variables: activeVars,
+            chat_history: chatHistory,
+            images: base64Images,
+            datasets: uploadedTextFiles
+        };
+
+        const pL = prompt.toLowerCase();
+        if (pL.includes("fix") || pL.includes("update") || pL.includes("change") || pL.includes("modify")) {
+            reqPayload.is_modification = true;
+            reqPayload.active_cell_id = lastActiveCellId;
+            if (lastActiveCellId) {
+                const ce = document.querySelector(`#cell-${lastActiveCellId} .code-editor`);
+                if (ce) {
+                    if (ce.nextSibling && ce.nextSibling.classList && ce.nextSibling.classList.contains('CodeMirror')) {
+                        reqPayload.original_code = ce.nextSibling.CodeMirror.getValue();
+                    } else {
+                        reqPayload.original_code = ce.value;
+                    }
+                }
+            }
+        }
+
+        const resp = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(reqPayload),
+            signal: currentAbortController.signal,
+        });
 
         if (!resp.ok) throw new Error("Server Error");
 
@@ -1940,22 +1914,26 @@ async function runAIQuery() {
         const toolUsed = data.tool_used || ""; // Get the intent/tool used
 
         let answer = data.answer || "";
-        
+
+        if (data.action === "UPDATE_CELL" && data.modified_code) {
+            updateLastActiveCell(data.cell_id, data.modified_code);
+        }
+
         // Title: set once from FIRST user message only.
         if (currentChatId && typeof updateChatTitleFromFirstUserMessage === 'function') {
-          updateChatTitleFromFirstUserMessage(currentChatId, prompt);
+            updateChatTitleFromFirstUserMessage(currentChatId, prompt);
         }
 
         // Update history
-        chatHistory.push({ role: "user", content: prompt });
+        chatHistory.push({ role: "user", content: prompt, images: base64Images.length > 0 ? base64Images : undefined });
         chatHistory.push({ role: "assistant", content: answer });
-        
+
         let codeNode = null;
         const originalAnswer = answer;
 
         // Show proposal controls only for generate intents with python code blocks
         const isGenerateIntent = toolUsed.toUpperCase().includes("GENERATE");
-        
+
         const codeMatch = originalAnswer.match(/```python([\s\S]*?)```/);
         if (codeMatch && isGenerateIntent) {
             const code = codeMatch[1].trim();
@@ -2009,349 +1987,349 @@ async function runAIQuery() {
         attachedFiles = [];
         const chipsEl = document.getElementById('ai-file-chips');
         if (chipsEl) chipsEl.innerHTML = '';
-  } catch (e) {
-    clearInterval(timerInt);
-    if (e.name === 'AbortError') {
-      // User cancelled - update the assistant bubble
-      assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><strong>Assistant</strong></div><div style="margin-top:8px;color:#94a3b8;font-style:italic;">Response cancelled.</div>`;
-    } else {
-      contentArea.innerHTML = `<p style="color:red;padding:15px;">Error: ${e.message}</p>`;
+    } catch (e) {
+        clearInterval(timerInt);
+        if (e.name === 'AbortError') {
+            // User cancelled - update the assistant bubble
+            assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><strong>Assistant</strong></div><div style="margin-top:8px;color:#94a3b8;font-style:italic;">Response cancelled.</div>`;
+        } else {
+            contentArea.innerHTML = `<p style="color:red;padding:15px;">Error: ${e.message}</p>`;
+        }
+    } finally {
+        currentAbortController = null;
+        setAILoading(false);
     }
-  } finally {
-    currentAbortController = null;
-    setAILoading(false);
-  }
 }
 
 
 function updateMaximizeButton(maxBtn, isDocked) {
-  if (!maxBtn) return;
-  
-  if (isDocked) {
-    // Show minimize icon
-    maxBtn.innerHTML = ICON_MINIMIZE;
-    maxBtn.setAttribute("aria-label", "Minimize");
-    maxBtn.setAttribute("title", "Minimize");
-  } else {
-    // Show maximize icon
-    maxBtn.innerHTML = ICON_MAXIMIZE;
-    maxBtn.setAttribute("aria-label", "Maximize");
-    maxBtn.setAttribute("title", "Maximize");
-  }
+    if (!maxBtn) return;
+
+    if (isDocked) {
+        // Show minimize icon
+        maxBtn.innerHTML = ICON_MINIMIZE;
+        maxBtn.setAttribute("aria-label", "Minimize");
+        maxBtn.setAttribute("title", "Minimize");
+    } else {
+        // Show maximize icon
+        maxBtn.innerHTML = ICON_MAXIMIZE;
+        maxBtn.setAttribute("aria-label", "Maximize");
+        maxBtn.setAttribute("title", "Maximize");
+    }
 }
 
 function initAIWidget() {
-  const fab = document.getElementById("ai-fab");
-  const mini = document.getElementById("ai-mini");
-  const closeBtn = document.getElementById("ai-mini-close");
-  const maxBtn = document.getElementById("ai-mini-max");
-  const input = document.getElementById("prompt-input");
-  const sendBtn = document.getElementById("run-btn");
-  const resizeHandle = document.querySelector(".ai-resize-handle");
+    const fab = document.getElementById("ai-fab");
+    const mini = document.getElementById("ai-mini");
+    const closeBtn = document.getElementById("ai-mini-close");
+    const maxBtn = document.getElementById("ai-mini-max");
+    const input = document.getElementById("prompt-input");
+    const sendBtn = document.getElementById("run-btn");
+    const resizeHandle = document.querySelector(".ai-resize-handle");
 
-  if (!fab || !mini) return;
+    if (!fab || !mini) return;
 
-  // Resize state
-  let isResizing = false;
-  let startX = 0;
-  let startWidth = 450;
+    // Resize state
+    let isResizing = false;
+    let startX = 0;
+    let startWidth = 450;
 
-  // Restore saved width from localStorage
-  const savedWidth = localStorage.getItem('ai-panel-width');
-  if (savedWidth) {
-    mini.style.setProperty('--ai-panel-width', savedWidth);
-  }
-
-  // State: whether popup is open and last used popup mode
-  let isOpen = mini.classList.contains('open');
-  let popupMode = localStorage.getItem('ai-popup-mode') || 'min';
-
-  const setOpen = (open) => {
-    if (!open) {
-      // Save current mode (min or max) before closing but do not reset it
-      const currentMode = mini.classList.contains("docked") ? 'max' : 'min';
-      popupMode = currentMode;
-      localStorage.setItem('ai-popup-mode', popupMode);
-      isOpen = false;
-
-      // Kill transition so it vanishes instantly
-      mini.style.transition = 'none';
-      // remove visual classes (panel closed)
-      mini.classList.remove("open");
-      mini.classList.remove("docked");
-      mini.setAttribute("aria-hidden", "true");
-      const content = document.querySelector(".content");
-      if (content) {
-        content.style.transition = 'none';
-        content.classList.remove("ai-docked");
-        content.style.setProperty('--ai-panel-width', '');
-        content.style.marginRight = '';
-        // Force a layout reflow to ensure immediate visual update when closing
-        content.offsetHeight; // Trigger reflow
-      }
-      // Re-enable transitions after a frame for future opens
-      requestAnimationFrame(() => {
-        mini.style.transition = '';
-        if (content) content.style.transition = '';
-      });
-      return;
+    // Restore saved width from localStorage
+    const savedWidth = localStorage.getItem('ai-panel-width');
+    if (savedWidth) {
+        mini.style.setProperty('--ai-panel-width', savedWidth);
     }
 
-    // Opening - re-read popupMode from localStorage to support dynamic mode changes
-    popupMode = localStorage.getItem('ai-popup-mode') || 'min';
-    isOpen = true;
-    mini.classList.add("open");
-    mini.setAttribute("aria-hidden", "false");
+    // State: whether popup is open and last used popup mode
+    let isOpen = mini.classList.contains('open');
+    let popupMode = localStorage.getItem('ai-popup-mode') || 'min';
 
-    // Restore to maximized (docked) mode if it was previously
-    if (popupMode === 'max') {
-      mini.classList.add("docked");
-      // Update button to show minimize icon
-      updateMaximizeButton(maxBtn, true);
-      const content = document.querySelector(".content");
-      if (content) {
-        const currentWidth = mini.style.getPropertyValue('--ai-panel-width') || '450px';
-        // Disable transitions for instant layout change
-        content.style.transition = 'none';
-        content.classList.add("ai-docked");
-        // Set both inline style and CSS custom property for consistency
-        content.style.setProperty('--ai-panel-width', currentWidth);
-        content.style.marginRight = currentWidth;
-        // Force a layout reflow to ensure immediate visual update
-        content.offsetHeight; // Trigger reflow
-        // Re-enable transitions after the change
-        requestAnimationFrame(() => {
-          content.style.transition = '';
-        });
-      }
-    } else {
-      // ensure undocked when opening in min mode
-      mini.classList.remove("docked");
-      // Update button to show maximize icon
-      updateMaximizeButton(maxBtn, false);
-    }
+    const setOpen = (open) => {
+        if (!open) {
+            // Save current mode (min or max) before closing but do not reset it
+            const currentMode = mini.classList.contains("docked") ? 'max' : 'min';
+            popupMode = currentMode;
+            localStorage.setItem('ai-popup-mode', popupMode);
+            isOpen = false;
 
-    if (input) input.focus();
-  };
-
-  fab.addEventListener("click", () => {
-    // Initialize one default chat for this notebook on first FAB click only
-    // (based on actual chat count, not transient click state)
-    if (chats.length === 0) {
-      try {
-        localStorage.setItem(`chat_initialized_${currentNotebookId}`, '1');
-      } catch (e) {
-        console.warn('Failed to persist chat init flag:', e);
-      }
-      createNewChat(); // opens popup and creates the first chat
-      return;
-    }
-    setOpen(!isOpen);
-  });
-  if (closeBtn) closeBtn.addEventListener("click", () => setOpen(false));
-
-  if (maxBtn) {
-    maxBtn.addEventListener("click", () => {
-      // Toggle docked state instead of expanded
-      const isDocked = mini.classList.toggle("docked");
-      
-      // Update button icon and label
-      updateMaximizeButton(maxBtn, isDocked);
-      
-      // Save the new mode to state and localStorage
-      popupMode = isDocked ? 'max' : 'min';
-      localStorage.setItem('ai-popup-mode', popupMode);
-      
-      // Adjust main content margin
-      const content = document.querySelector(".content");
-      if (content) {
-        // Disable transitions for instant layout change
-        content.style.transition = 'none';
-        
-        if (isDocked) {
-          // Use saved width or default
-          const currentWidth = mini.style.getPropertyValue('--ai-panel-width') || '450px';
-          content.classList.add("ai-docked");
-          // Set both inline style and CSS custom property for consistency
-          content.style.setProperty('--ai-panel-width', currentWidth);
-          content.style.marginRight = currentWidth;
-        } else {
-          content.classList.remove("ai-docked");
-          content.style.setProperty('--ai-panel-width', '');
-          content.style.marginRight = '';
+            // Kill transition so it vanishes instantly
+            mini.style.transition = 'none';
+            // remove visual classes (panel closed)
+            mini.classList.remove("open");
+            mini.classList.remove("docked");
+            mini.setAttribute("aria-hidden", "true");
+            const content = document.querySelector(".content");
+            if (content) {
+                content.style.transition = 'none';
+                content.classList.remove("ai-docked");
+                content.style.setProperty('--ai-panel-width', '');
+                content.style.marginRight = '';
+                // Force a layout reflow to ensure immediate visual update when closing
+                content.offsetHeight; // Trigger reflow
+            }
+            // Re-enable transitions after a frame for future opens
+            requestAnimationFrame(() => {
+                mini.style.transition = '';
+                if (content) content.style.transition = '';
+            });
+            return;
         }
-        
-        // Force a layout reflow to ensure immediate visual update
-        // This is necessary because we disabled transitions
-        content.offsetHeight; // Trigger reflow
-        
-        // Re-enable transitions after the change
-        requestAnimationFrame(() => {
-          content.style.transition = '';
+
+        // Opening - re-read popupMode from localStorage to support dynamic mode changes
+        popupMode = localStorage.getItem('ai-popup-mode') || 'min';
+        isOpen = true;
+        mini.classList.add("open");
+        mini.setAttribute("aria-hidden", "false");
+
+        // Restore to maximized (docked) mode if it was previously
+        if (popupMode === 'max') {
+            mini.classList.add("docked");
+            // Update button to show minimize icon
+            updateMaximizeButton(maxBtn, true);
+            const content = document.querySelector(".content");
+            if (content) {
+                const currentWidth = mini.style.getPropertyValue('--ai-panel-width') || '450px';
+                // Disable transitions for instant layout change
+                content.style.transition = 'none';
+                content.classList.add("ai-docked");
+                // Set both inline style and CSS custom property for consistency
+                content.style.setProperty('--ai-panel-width', currentWidth);
+                content.style.marginRight = currentWidth;
+                // Force a layout reflow to ensure immediate visual update
+                content.offsetHeight; // Trigger reflow
+                // Re-enable transitions after the change
+                requestAnimationFrame(() => {
+                    content.style.transition = '';
+                });
+            }
+        } else {
+            // ensure undocked when opening in min mode
+            mini.classList.remove("docked");
+            // Update button to show maximize icon
+            updateMaximizeButton(maxBtn, false);
+        }
+
+        if (input) input.focus();
+    };
+
+    fab.addEventListener("click", () => {
+        // Initialize one default chat for this notebook on first FAB click only
+        // (based on actual chat count, not transient click state)
+        if (chats.length === 0) {
+            try {
+                localStorage.setItem(`chat_initialized_${currentNotebookId}`, '1');
+            } catch (e) {
+                console.warn('Failed to persist chat init flag:', e);
+            }
+            createNewChat(); // opens popup and creates the first chat
+            return;
+        }
+        setOpen(!isOpen);
+    });
+    if (closeBtn) closeBtn.addEventListener("click", () => setOpen(false));
+
+    if (maxBtn) {
+        maxBtn.addEventListener("click", () => {
+            // Toggle docked state instead of expanded
+            const isDocked = mini.classList.toggle("docked");
+
+            // Update button icon and label
+            updateMaximizeButton(maxBtn, isDocked);
+
+            // Save the new mode to state and localStorage
+            popupMode = isDocked ? 'max' : 'min';
+            localStorage.setItem('ai-popup-mode', popupMode);
+
+            // Adjust main content margin
+            const content = document.querySelector(".content");
+            if (content) {
+                // Disable transitions for instant layout change
+                content.style.transition = 'none';
+
+                if (isDocked) {
+                    // Use saved width or default
+                    const currentWidth = mini.style.getPropertyValue('--ai-panel-width') || '450px';
+                    content.classList.add("ai-docked");
+                    // Set both inline style and CSS custom property for consistency
+                    content.style.setProperty('--ai-panel-width', currentWidth);
+                    content.style.marginRight = currentWidth;
+                } else {
+                    content.classList.remove("ai-docked");
+                    content.style.setProperty('--ai-panel-width', '');
+                    content.style.marginRight = '';
+                }
+
+                // Force a layout reflow to ensure immediate visual update
+                // This is necessary because we disabled transitions
+                content.offsetHeight; // Trigger reflow
+
+                // Re-enable transitions after the change
+                requestAnimationFrame(() => {
+                    content.style.transition = '';
+                });
+            }
+
+            // Keep focus on input
+            if (input) input.focus();
         });
-      }
-      
-      // Keep focus on input
-      if (input) input.focus();
-    });
-  }
-
-  // Resize functionality
-  if (resizeHandle) {
-    resizeHandle.addEventListener("mousedown", (e) => {
-      isResizing = true;
-      startX = e.clientX;
-      startWidth = mini.offsetWidth;
-      document.body.style.cursor = "col-resize";
-      document.body.style.userSelect = "none";
-      // Disable transitions for instant resize
-      mini.style.transition = "none";
-      const content = document.querySelector(".content");
-      if (content) content.style.transition = "none";
-      e.preventDefault();
-    });
-  }
-
-  document.addEventListener("mousemove", (e) => {
-    if (!isResizing) return;
-
-    // Calculate new width (dragging left increases width, dragging right decreases)
-    const deltaX = startX - e.clientX;
-    const newWidth = Math.min(Math.max(startWidth + deltaX, 400), 800);
-
-    // Update panel width using CSS custom property
-    mini.style.setProperty("--ai-panel-width", newWidth + "px");
-
-    // Update content margin to match
-    const content = document.querySelector(".content");
-    if (content && mini.classList.contains("docked")) {
-      // Set both inline style and CSS custom property for consistency
-      content.style.setProperty("--ai-panel-width", newWidth + "px");
-      content.style.marginRight = newWidth + "px";
     }
-  });
 
-  document.addEventListener("mouseup", () => {
-    if (isResizing) {
-      isResizing = false;
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-      // Re-enable transitions
-      mini.style.transition = "";
-      const content = document.querySelector(".content");
-      if (content) content.style.transition = "";
-
-      // Save width to localStorage
-      const width = mini.style.getPropertyValue("--ai-panel-width");
-      if (width) {
-        localStorage.setItem("ai-panel-width", width);
-      }
+    // Resize functionality
+    if (resizeHandle) {
+        resizeHandle.addEventListener("mousedown", (e) => {
+            isResizing = true;
+            startX = e.clientX;
+            startWidth = mini.offsetWidth;
+            document.body.style.cursor = "col-resize";
+            document.body.style.userSelect = "none";
+            // Disable transitions for instant resize
+            mini.style.transition = "none";
+            const content = document.querySelector(".content");
+            if (content) content.style.transition = "none";
+            e.preventDefault();
+        });
     }
-  });
 
-  if (sendBtn) sendBtn.addEventListener("click", runAIQuery);
+    document.addEventListener("mousemove", (e) => {
+        if (!isResizing) return;
 
-  // --- File Upload ---
-  const attachBtn = document.getElementById("ai-attach-btn");
-  const fileInput = document.getElementById("ai-file-input");
-  const fileChips = document.getElementById("ai-file-chips");
+        // Calculate new width (dragging left increases width, dragging right decreases)
+        const deltaX = startX - e.clientX;
+        const newWidth = Math.min(Math.max(startWidth + deltaX, 400), 800);
 
-  if (attachBtn && fileInput) {
-    attachBtn.addEventListener("click", () => fileInput.click());
+        // Update panel width using CSS custom property
+        mini.style.setProperty("--ai-panel-width", newWidth + "px");
 
-    fileInput.addEventListener("change", () => {
-      const files = Array.from(fileInput.files);
-      files.forEach((file) => {
-        attachedFiles.push(file);
-        renderFileChip(file, fileChips);
-      });
-      fileInput.value = ""; // Reset so same file can be re-selected
-    });
-  }
-
-  function renderFileChip(file, container) {
-    if (!container) return;
-    const chip = document.createElement("div");
-    chip.className = "ai-file-chip";
-    const nameSpan = document.createElement("span");
-    nameSpan.textContent = file.name;
-    nameSpan.title = file.name;
-    const removeBtn = document.createElement("button");
-    removeBtn.innerHTML = "×";
-    removeBtn.title = "Remove";
-    removeBtn.addEventListener("click", () => {
-      attachedFiles = attachedFiles.filter((f) => f !== file);
-      chip.remove();
-    });
-    chip.appendChild(nameSpan);
-    chip.appendChild(removeBtn);
-    container.appendChild(chip);
-  }
-
-  // --- Microphone (Web Speech API) ---
-  const micBtn = document.getElementById("ai-mic-btn");
-  let recognition = null;
-
-  if (micBtn && ("webkitSpeechRecognition" in window || "SpeechRecognition" in window)) {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    recognition = new SpeechRecognition();
-    recognition.lang = "en-US";
-    recognition.continuous = false;
-    recognition.interimResults = true;
-
-    micBtn.addEventListener("click", () => {
-      if (micBtn.classList.contains("recording")) {
-        recognition.stop();
-        micBtn.classList.remove("recording");
-      } else {
-        recognition.start();
-        micBtn.classList.add("recording");
-      }
+        // Update content margin to match
+        const content = document.querySelector(".content");
+        if (content && mini.classList.contains("docked")) {
+            // Set both inline style and CSS custom property for consistency
+            content.style.setProperty("--ai-panel-width", newWidth + "px");
+            content.style.marginRight = newWidth + "px";
+        }
     });
 
-    recognition.onresult = (event) => {
-      let transcript = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        transcript += event.results[i][0].transcript;
-      }
-      if (input) {
-        input.value = transcript;
-        input.style.height = "auto";
-        input.style.height = Math.min(input.scrollHeight, 140) + "px";
-      }
-    };
+    document.addEventListener("mouseup", () => {
+        if (isResizing) {
+            isResizing = false;
+            document.body.style.cursor = "";
+            document.body.style.userSelect = "";
+            // Re-enable transitions
+            mini.style.transition = "";
+            const content = document.querySelector(".content");
+            if (content) content.style.transition = "";
 
-    recognition.onend = () => {
-      micBtn.classList.remove("recording");
-    };
-
-    recognition.onerror = () => {
-      micBtn.classList.remove("recording");
-    };
-  }
-
-  // --- Enter to Send, Shift+Enter for newline ---
-  if (input) {
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        runAIQuery();
-      }
+            // Save width to localStorage
+            const width = mini.style.getPropertyValue("--ai-panel-width");
+            if (width) {
+                localStorage.setItem("ai-panel-width", width);
+            }
+        }
     });
-  }
 
-  // Auto-grow textarea
-  if (input) {
-    input.addEventListener("input", () => {
-      input.style.height = "auto";
-      input.style.height = Math.min(input.scrollHeight, 140) + "px";
+    if (sendBtn) sendBtn.addEventListener("click", runAIQuery);
+
+    // --- File Upload ---
+    const attachBtn = document.getElementById("ai-attach-btn");
+    const fileInput = document.getElementById("ai-file-input");
+    const fileChips = document.getElementById("ai-file-chips");
+
+    if (attachBtn && fileInput) {
+        attachBtn.addEventListener("click", () => fileInput.click());
+
+        fileInput.addEventListener("change", () => {
+            const files = Array.from(fileInput.files);
+            files.forEach((file) => {
+                attachedFiles.push(file);
+                renderFileChip(file, fileChips);
+            });
+            fileInput.value = ""; // Reset so same file can be re-selected
+        });
+    }
+
+    function renderFileChip(file, container) {
+        if (!container) return;
+        const chip = document.createElement("div");
+        chip.className = "ai-file-chip";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        nameSpan.title = file.name;
+        const removeBtn = document.createElement("button");
+        removeBtn.innerHTML = "×";
+        removeBtn.title = "Remove";
+        removeBtn.addEventListener("click", () => {
+            attachedFiles = attachedFiles.filter((f) => f !== file);
+            chip.remove();
+        });
+        chip.appendChild(nameSpan);
+        chip.appendChild(removeBtn);
+        container.appendChild(chip);
+    }
+
+    // --- Microphone (Web Speech API) ---
+    const micBtn = document.getElementById("ai-mic-btn");
+    let recognition = null;
+
+    if (micBtn && ("webkitSpeechRecognition" in window || "SpeechRecognition" in window)) {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        recognition = new SpeechRecognition();
+        recognition.lang = "en-US";
+        recognition.continuous = false;
+        recognition.interimResults = true;
+
+        micBtn.addEventListener("click", () => {
+            if (micBtn.classList.contains("recording")) {
+                recognition.stop();
+                micBtn.classList.remove("recording");
+            } else {
+                recognition.start();
+                micBtn.classList.add("recording");
+            }
+        });
+
+        recognition.onresult = (event) => {
+            let transcript = "";
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                transcript += event.results[i][0].transcript;
+            }
+            if (input) {
+                input.value = transcript;
+                input.style.height = "auto";
+                input.style.height = Math.min(input.scrollHeight, 140) + "px";
+            }
+        };
+
+        recognition.onend = () => {
+            micBtn.classList.remove("recording");
+        };
+
+        recognition.onerror = () => {
+            micBtn.classList.remove("recording");
+        };
+    }
+
+    // --- Enter to Send, Shift+Enter for newline ---
+    if (input) {
+        input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                runAIQuery();
+            }
+        });
+    }
+
+    // Auto-grow textarea
+    if (input) {
+        input.addEventListener("input", () => {
+            input.style.height = "auto";
+            input.style.height = Math.min(input.scrollHeight, 140) + "px";
+        });
+    }
+
+    // ESC closes
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") setOpen(false);
     });
-  }
-
-  // ESC closes
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") setOpen(false);
-  });
 }
 
 // ==========================================
@@ -2362,29 +2340,29 @@ function initAIWidget() {
  * Opens AI popup in minimized mode
  */
 function openAIPopupMinimized() {
-  localStorage.setItem('ai-popup-mode', 'min');
-  const fab = document.getElementById('ai-fab');
-  if (fab) fab.click();
+    localStorage.setItem('ai-popup-mode', 'min');
+    const fab = document.getElementById('ai-fab');
+    if (fab) fab.click();
 }
 
 /**
  * Opens AI popup in maximized mode
  */
 function openAIPopupMaximized() {
-  localStorage.setItem('ai-popup-mode', 'max');
-  const fab = document.getElementById('ai-fab');
-  if (fab) fab.click();
+    localStorage.setItem('ai-popup-mode', 'max');
+    const fab = document.getElementById('ai-fab');
+    if (fab) fab.click();
 }
 
 /**
  * Opens AI popup in a specific mode ('min' or 'max')
  */
 function openAIPopupWithMode(mode) {
-  if (mode === 'min' || mode === 'max') {
-    localStorage.setItem('ai-popup-mode', mode);
-  }
-  const fab = document.getElementById('ai-fab');
-  if (fab) fab.click();
+    if (mode === 'min' || mode === 'max') {
+        localStorage.setItem('ai-popup-mode', mode);
+    }
+    const fab = document.getElementById('ai-fab');
+    if (fab) fab.click();
 }
 
 // Add these helper functions to script.js
@@ -2400,14 +2378,14 @@ function toggleAITray() {
 function toggleDrawer(drawerName) {
     const drawer = document.getElementById(`drawer-${drawerName}`);
     if (!drawer) return;
-    
+
     const isOpen = drawer.classList.contains('open');
-    
+
     // Close all other drawers
     document.querySelectorAll('.drawer').forEach(d => {
         d.classList.remove('open');
     });
-    
+
     // Toggle the clicked drawer
     if (!isOpen) {
         drawer.classList.add('open');
@@ -2434,36 +2412,37 @@ function closeDrawer(drawerName) {
 
 // --- 4. TABS & DB (Preserved) ---
 function switchTab(view) {
-  const workspaceView = document.getElementById("workspace-view");
-  const connectionsView = document.getElementById("connections-view");
-  
-  // NEW: your floating AI widget wrapper
-  const aiWidget = document.getElementById("ai-widget");
-  const aiMini = document.getElementById("ai-mini");
+    const workspaceView = document.getElementById("workspace-view");
+    const connectionsView = document.getElementById("connections-view");
 
-  // Update active nav item
-  document.querySelectorAll(".nav-item").forEach((el) => el.classList.remove("active"));
-  document.getElementById(`nav-${view}`)?.classList.add("active");
+    // NEW: your floating AI widget wrapper
+    const aiWidget = document.getElementById("ai-widget");
+    const aiMini = document.getElementById("ai-mini");
 
-  // Hide all views
-  if (workspaceView) workspaceView.style.display = "none";
-  if (connectionsView) connectionsView.style.display = "none";
+    // Update active nav item
+    document.querySelectorAll(".nav-item").forEach((el) => el.classList.remove("active"));
+    document.getElementById(`nav-${view}`)?.classList.add("active");
 
-  // Default: hide AI on non-workspace screens
-  if (aiWidget) aiWidget.style.display = "none";
-  if (aiMini) aiMini.classList.remove("open");
+    // Hide all views
+    if (workspaceView) workspaceView.style.display = "none";
+    if (connectionsView) connectionsView.style.display = "none";
 
-  switch (view) {
-    case "connections":
-      if (connectionsView) connectionsView.style.display = "flex";
-      loadConnections?.();
-      break;
+    // Default: hide AI on non-workspace screens
+    if (aiWidget) aiWidget.style.display = "none";
+    if (aiMini) aiMini.classList.remove("open");
 
-    default: // "workspace" 
-      if (workspaceView) workspaceView.style.display = "flex";
-      if (aiWidget) aiWidget.style.display = "block";
-      break;
-  }
+    switch (view) {
+        case "connections":
+            if (connectionsView) connectionsView.style.display = "flex";
+            loadConnections?.();
+            loadVectorMemory?.();
+            break;
+
+        default: // "workspace" 
+            if (workspaceView) workspaceView.style.display = "flex";
+            if (aiWidget) aiWidget.style.display = "block";
+            break;
+    }
 }
 
 async function loadConnections() {
@@ -2494,7 +2473,12 @@ async function loadConnections() {
         `;
         list.appendChild(div);
     }
-} async function deleteDB(event, name) {
+
+    // Auto load tables for the active connection
+    loadTables();
+}
+
+async function deleteDB(event, name) {
     event.stopPropagation();
 
     if (!await customConfirm(`Are you sure you want to delete "${name}"?`, true)) {
@@ -2539,8 +2523,10 @@ function toggleConnForm() {
 }
 
 async function saveNewConnection() {
+    const providerEl = document.getElementById('db-provider');
     const data = {
         name: document.getElementById('db-alias').value,
+        provider: providerEl ? providerEl.value : 'postgresql',
         host: document.getElementById('db-host').value,
         port: document.getElementById('db-port').value,
         database: document.getElementById('db-name').value,
@@ -2554,6 +2540,101 @@ async function saveNewConnection() {
 async function switchConnection(name) {
     await fetch('/api/connections/activate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
     loadConnections();
+}
+
+async function loadTables() {
+    const tableList = document.getElementById('tables-list');
+    if (!tableList) return;
+    tableList.innerHTML = 'Loading tables...';
+    try {
+        const resp = await fetch('/api/tables');
+        const data = await resp.json();
+        if (!data.tables || data.tables.length === 0) {
+            tableList.innerHTML = 'No active connection or tables found.';
+            return;
+        }
+        tableList.innerHTML = data.tables.map(tbl => `
+            <div style="display:flex; justify-content:space-between; align-items:center; padding: 6px 0; border-bottom: 1px solid var(--border);">
+                <span>${tbl}</span>
+                <button onclick="indexTable('${tbl}', event)" style="padding:4px 8px; font-size:0.75rem; border-radius:4px; background:var(--primary); color:white; border:none; cursor:pointer;">Index</button>
+            </div>
+        `).join('');
+    } catch (err) {
+        tableList.innerHTML = 'Error loading tables.';
+    }
+}
+
+async function indexTable(tableName, event) {
+    const btn = event.target;
+    btn.innerText = 'Indexing...';
+    btn.disabled = true;
+    btn.style.opacity = '0.7';
+    try {
+        const resp = await fetch('/api/index_table', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ table_name: tableName })
+        });
+        const result = await resp.json();
+        if (resp.ok) {
+            btn.innerText = 'Indexed ✓';
+            btn.style.background = '#10b981'; // Green
+        } else {
+            throw new Error(result.message || 'Failed');
+        }
+    } catch (err) {
+        btn.innerText = 'Error';
+        btn.style.background = '#ef4444'; // Red
+    }
+    setTimeout(() => {
+        btn.innerText = 'Index';
+        btn.disabled = false;
+        btn.style.background = 'var(--primary)';
+        btn.style.opacity = '1';
+    }, 5000);
+    // Reload memory to see the newly indexed table
+    setTimeout(() => { loadVectorMemory(); }, 2000);
+}
+
+async function loadVectorMemory() {
+    const memoryList = document.getElementById('vector-memory-list');
+    if (!memoryList) return;
+    memoryList.innerHTML = 'Loading memory...';
+    try {
+        const resp = await fetch('/api/vector_memory');
+        const data = await resp.json();
+        if (!data.sources || data.sources.length === 0) {
+            memoryList.innerHTML = 'No data currently indexed.';
+            return;
+        }
+        memoryList.innerHTML = data.sources.map(src => `
+            <div style="display:flex; justify-content:space-between; align-items:center; padding: 6px 0; border-bottom: 1px solid var(--border);">
+                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px;" title="${src}">${src}</span>
+                <button onclick="deleteVectorMemory('${src}')" style="background:transparent; color:#ef4444; border:none; cursor:pointer;" title="Delete from Memory">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                </button>
+            </div>
+        `).join('');
+    } catch (err) {
+        memoryList.innerHTML = 'Error loading memory.';
+    }
+}
+
+async function deleteVectorMemory(sourceName) {
+    if (!confirm(`Are you sure you want to delete '${sourceName}' from the AI's Vector Memory?`)) return;
+    try {
+        const resp = await fetch(`/api/vector_memory/${encodeURIComponent(sourceName)}`, {
+            method: 'DELETE'
+        });
+        if (resp.ok) {
+            loadVectorMemory(); // Refresh the list
+        } else {
+            const error = await resp.json();
+            alert('Delete failed: ' + error.detail);
+        }
+    } catch (err) {
+        alert('Failed to delete memory block.');
+    }
 }
 
 async function loadHistory() {
@@ -2572,10 +2653,20 @@ async function loadHistory() {
 
 async function checkStatus() {
     const dot = document.getElementById('status-dot');
+    const text = document.getElementById('status-text');
     try {
         const resp = await fetch('/health');
-        dot.style.color = resp.ok ? '#4ade80' : '#ef4444';
-    } catch { dot.style.color = '#ef4444'; }
+        if (resp.ok) {
+            dot.style.color = '#4ade80';
+            text.innerText = 'Online';
+        } else {
+            dot.style.color = '#ef4444';
+            text.innerText = 'Offline';
+        }
+    } catch {
+        dot.style.color = '#ef4444';
+        text.innerText = 'Offline';
+    }
 }
 
 
@@ -2589,7 +2680,7 @@ async function saveNotebook(prefillName) {
         return;
     }
 
-    const oldName     = currentNotebookName; 
+    const oldName = currentNotebookName;
     const defaultName = prefillName || currentNotebookName || generateNotebookName();
 
     // ── Validator for Duplicate Check ──────────────────────────────────────
@@ -2599,8 +2690,8 @@ async function saveNotebook(prefillName) {
         try {
             const res = await fetch('/api/notebooks');
             const list = await res.json();
-            const exists = list.some(nb => 
-                nb.display_name.trim().toLowerCase() === name.trim().toLowerCase() && 
+            const exists = list.some(nb =>
+                nb.display_name.trim().toLowerCase() === name.trim().toLowerCase() &&
                 nb.display_name !== oldName // allow saving to self (update)
             );
             return exists ? "A notebook with this name already exists" : null;
@@ -2677,9 +2768,9 @@ async function saveNotebook(prefillName) {
         if (oldName && oldName !== name) {
             await fetch(`/api/notebooks/${encodeURIComponent(oldName)}`, { method: 'DELETE' });
         }
-        
+
         loadSavedNotebooks();
-        isDirty         = false;
+        isDirty = false;
         isNotebookSaved = true;
 
     } catch (e) {
@@ -2711,8 +2802,8 @@ function _doNewNotebook() {
     renderChatList();
 
     // Reset dirty state for fresh notebook
-    isDirty            = false;
-    isNotebookSaved    = false;
+    isDirty = false;
+    isNotebookSaved = false;
     currentNotebookName = null;
 }
 
@@ -2763,7 +2854,7 @@ async function openNotebook(name) {
     }
 
     // Set notebook identity based on notebook name
-    currentNotebookId   = 'notebook_' + name;
+    currentNotebookId = 'notebook_' + name;
     currentNotebookName = name;  // prefill for future saves
     persistActiveNotebookId();
     setNotebookTitle(name);
@@ -2852,46 +2943,46 @@ async function openNotebook(name) {
     saveChatsToLocalStorage();
 
     // Mark this as a clean, previously-saved notebook
-    isDirty         = false;
+    isDirty = false;
     isNotebookSaved = true;
 }
 
 function renderChatHistory(history) {
     const contentArea = document.getElementById("ai-content-area");
     contentArea.innerHTML = '';
-    
+
     history.forEach(msg => {
         const bubble = document.createElement('div');
         const isUser = msg.role === 'user';
         bubble.className = `ai-msg ${isUser ? 'user' : 'assistant'}`;
-        
+
         if (isUser) {
             bubble.style.cssText = "padding:16px 10px 10px 10px; background:#eef2ff; border-radius:10px; margin:8px 0 8px auto; width:fit-content; max-width:70%; word-wrap:break-word; white-space:pre-wrap; overflow-wrap:break-word;";
             bubble.innerText = msg.content;
         } else {
             bubble.style.cssText = "padding:16px 10px 10px 20px; background:#ffffff; border:1px solid #e6edf3; border-radius:10px; margin:8px 0;";
-            
+
             // Header
             const header = document.createElement('div');
             header.style.cssText = "display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;";
             header.innerHTML = `<strong>Assistant</strong><span style="color:#888; font-size:0.75rem;">Restored</span>`;
-            
+
             // Body
             const body = document.createElement('div');
             body.style.cssText = "font-size:0.95rem; line-height:1.5;";
-            
-             if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
+
+            if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
                 body.innerHTML = DOMPurify.sanitize(marked.parse(msg.content || ''));
             } else {
                 body.innerText = msg.content;
             }
-            
+
             bubble.appendChild(header);
             bubble.appendChild(body);
         }
         contentArea.appendChild(bubble);
     });
-    
+
     const tray = document.getElementById("ai-response-tray");
     if (tray) tray.scrollTop = tray.scrollHeight;
 }
@@ -3330,9 +3421,55 @@ function formatSavedTimestamp(ts) {
     const [hh, min] = timePart.split(':');
     const hour = parseInt(hh, 10);
     const ampm = hour >= 12 ? 'PM' : 'AM';
-    const h12  = hour % 12 || 12;
-    const yy   = yyyy.slice(-2);
+    const h12 = hour % 12 || 12;
+    const yy = yyyy.slice(-2);
     return `${dd}/${mm}/${yy}, ${h12}:${min} ${ampm}`;
+}
+
+async function uploadSavedNotebook(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    if (!file.name.endsWith('.ipynb')) {
+        await customAlert("Only .ipynb files can be uploaded as notebooks.");
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        setNotebookTitle("Uploading...");
+
+        const response = await fetch('/api/notebooks/upload', {
+            method: 'POST',
+            body: formData
+        });
+
+        const data = await response.json();
+        if (response.ok) {
+            await customAlert(`Notebook '${data.name}' uploaded successfully!`);
+            setNotebookTitle(data.name);
+            currentNotebookName = data.name;
+
+            // Reload the saved notebooks drawer
+            if (typeof loadSavedNotebooks === 'function') {
+                loadSavedNotebooks();
+            }
+            // Open the freshly uploaded notebook
+            if (typeof openNotebook === 'function') {
+                openNotebook(data.name);
+            }
+        } else {
+            throw new Error(data.detail || data.error || 'Upload failed');
+        }
+    } catch (e) {
+        setNotebookTitle("Untitled Notebook");
+        await customAlert('Upload error: ' + e.message);
+    }
+
+    // Clear the input so the same file can be uploaded again if needed
+    event.target.value = '';
 }
 async function loadSavedNotebooks() {
     const resp = await fetch('/api/notebooks');
@@ -3346,7 +3483,8 @@ async function loadSavedNotebooks() {
 
     const notebookIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="15.6" height="15.6" viewBox="-2 -1 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-notebook-text"><path d="M2 6h4"/><path d="M2 10h4"/><path d="M2 14h4"/><path d="M2 18h4"/><rect width="16" height="20" x="4" y="2" rx="2"/><path d="M9.5 8h5"/><path d="M9.5 12H16"/><path d="M9.5 16H14"/></svg>`;
     const trash = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`;
-    const pen   = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-pen-line"><path d="M13 21h8"/><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/></svg>`;
+    const pen = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-pen-line"><path d="M13 21h8"/><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/></svg>`;
+    const downloadSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-download"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>`;
 
     list.innerHTML = '';
     data.forEach(nb => {
@@ -3362,8 +3500,9 @@ async function loadSavedNotebooks() {
         }
 
         card.innerHTML = `
-            <button class="rename-db-btn" onclick="initRename(event, '${nb.display_name}')">${pen}</button>
-            <button class="delete-db-btn" onclick="deleteSavedNotebook(event, '${nb.display_name}')">${trash}</button>
+            <button class="download-db-btn" onclick="downloadSavedNotebook(event, '${nb.display_name}')" title="Download">${downloadSvg}</button>
+            <button class="rename-db-btn" onclick="initRename(event, '${nb.display_name}')" title="Rename">${pen}</button>
+            <button class="delete-db-btn" onclick="deleteSavedNotebook(event, '${nb.display_name}')" title="Delete">${trash}</button>
             <div style="display:flex; justify-content:space-between; align-items:center;">
                 <strong style="color:#1e293b; font-size:1rem;">${notebookIcon} ${nb.display_name}</strong>
                 <span style="font-size:0.625rem; color:#94a3b8;">${formatSavedTimestamp(nb.timestamp)}</span>
@@ -3373,7 +3512,7 @@ async function loadSavedNotebooks() {
 
         card.addEventListener('click', (e) => {
             // Ignore clicks if clicking buttons or input
-            if (e.target.closest('.delete-db-btn') || e.target.closest('.rename-db-btn') || e.target.closest('input')) return;
+            if (e.target.closest('.delete-db-btn') || e.target.closest('.rename-db-btn') || e.target.closest('.download-db-btn') || e.target.closest('input')) return;
             // Update selection state
             selectedSavedNotebook = nb.display_name;
             // Highlight this card, deselect others in list
@@ -3387,22 +3526,61 @@ async function loadSavedNotebooks() {
     });
 }
 
+// ── Download Notebook Logic ───────────────────────────────────────────────────
+async function downloadSavedNotebook(event, name) {
+    event.stopPropagation();
+    try {
+        const resp = await fetch(`/api/notebooks/${encodeURIComponent(name)}/download`);
+        if (!resp.ok) {
+            throw new Error(`Failed to download notebook (Status: ${resp.status})`);
+        }
+
+        // Convert response to blob
+        const blob = await resp.blob();
+
+        // Generate a temporary anchor to trigger download
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+
+        // Try to get exact filename backend sent
+        const contentDisposition = resp.headers.get('Content-Disposition');
+        let filename = `${name}.ipynb`;
+        if (contentDisposition && contentDisposition.includes('filename=')) {
+            const matches = /filename="([^"]+)"/.exec(contentDisposition);
+            if (matches != null && matches[1]) {
+                filename = matches[1];
+            }
+        }
+
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+
+        // Cleanup
+        a.remove();
+        window.URL.revokeObjectURL(url);
+    } catch (e) {
+        await customAlert('Download error: ' + e.message);
+    }
+}
+
 // ── Relative time helper ─────────────────────────────────────────────────────
 // Input: "YYYY-MM-DD HH:MM:SS" or "YYYY-MM-DD HH:MM"
 function getRelativeTime(ts) {
     if (!ts) return '';
     // Parse backend format: replace space with T for ISO compatibility
     const past = new Date(ts.replace(' ', 'T'));
-    const diffMs  = Date.now() - past.getTime();
+    const diffMs = Date.now() - past.getTime();
     const diffMin = Math.floor(diffMs / 60000);
-    if (diffMin < 1)   return 'just now';
-    if (diffMin < 60)  return diffMin + 'm';
+    if (diffMin < 1) return 'just now';
+    if (diffMin < 60) return diffMin + 'm';
     const diffHr = Math.floor(diffMin / 60);
-    if (diffHr  < 24)  return diffHr  + 'hr';
-    const diffDay = Math.floor(diffHr  / 24);
-    if (diffDay < 7)   return diffDay + 'd';
-    const diffWk  = Math.floor(diffDay / 7);
-    if (diffWk  < 52)  return diffWk  + 'w';
+    if (diffHr < 24) return diffHr + 'hr';
+    const diffDay = Math.floor(diffHr / 24);
+    if (diffDay < 7) return diffDay + 'd';
+    const diffWk = Math.floor(diffDay / 7);
+    if (diffWk < 52) return diffWk + 'w';
     return Math.floor(diffWk / 52) + 'yr';
 }
 
@@ -3417,14 +3595,14 @@ function initRename(event, name) {
     const container = document.createElement('div');
     container.style.display = 'flex';
     container.style.flexDirection = 'column'; // Vertical stack for error msg
-    
+
     // Create input
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'rename-input';
     input.value = name;
     input.dataset.oldName = name;
-    
+
     container.appendChild(input);
 
     // Replace strong with container
@@ -3434,33 +3612,33 @@ function initRename(event, name) {
     input.select();
 
     let isSaving = false;
-    
+
     const save = async (e) => {
         if (isSaving) return;
         isSaving = true;
-        
+
         // Pass event type to finishRename so we handle Blur vs Enter differently
         const isBlur = e && e.type === 'blur';
-        
+
         await finishRename(input, container, strong, isBlur);
-        
+
         // Reset flag if we returned (e.g. error on Enter kept input open)
         // If success or revert happened, input/container are removed anyway
         if (document.body.contains(input)) {
-             isSaving = false;
+            isSaving = false;
         }
     };
 
     // Use a slight delay on blur to allow for other interactions if needed, 
     // but main logic is robust.
     input.addEventListener('blur', save);
-    
+
     input.addEventListener('keydown', async (e) => {
         if (e.key === 'Enter') {
-             e.preventDefault();
-             // Remove blur listener to avoid double-fire
-             input.removeEventListener('blur', save);
-             await save(e);
+            e.preventDefault();
+            // Remove blur listener to avoid double-fire
+            input.removeEventListener('blur', save);
+            await save(e);
         }
         if (e.key === 'Escape') {
             input.removeEventListener('blur', save);
@@ -3468,14 +3646,14 @@ function initRename(event, name) {
             strong.style.display = '';
         }
     });
-    
+
     input.addEventListener('click', e => e.stopPropagation());
 }
 
 async function finishRename(input, container, strong, isBlur) {
     const oldName = input.dataset.oldName;
     const newName = input.value.trim();
-    
+
     // Clear any previous error
     const errorSpan = container.querySelector('.rename-error');
     if (errorSpan) errorSpan.remove();
@@ -3493,9 +3671,9 @@ async function finishRename(input, container, strong, isBlur) {
         const listResp = await fetch('/api/notebooks');
         if (!listResp.ok) throw new Error("Validation check failed");
         const listData = await listResp.json();
-        
+
         // Case-insensitive check
-        const exists = listData.some(nb => 
+        const exists = listData.some(nb =>
             nb.display_name.trim().toLowerCase() === newName.toLowerCase()
         );
 
@@ -3531,7 +3709,7 @@ async function finishRename(input, container, strong, isBlur) {
         if (resRename.ok) {
             // Success! Mtime preserved.
             loadSavedNotebooks();
-            
+
             if (currentNotebookId === 'notebook_' + oldName) {
                 currentNotebookId = 'notebook_' + newName;
                 currentNotebookName = newName;
@@ -3545,9 +3723,9 @@ async function finishRename(input, container, strong, isBlur) {
         if (resRename.status === 404 || resRename.status === 405) {
             console.warn("Atomic rename not available, falling back to copy-delete (timestamp will update).");
         } else {
-             // Other error (e.g. 500)
-             const err = await resRename.json();
-             throw new Error(err.detail || "Rename failed");
+            // Other error (e.g. 500)
+            const err = await resRename.json();
+            throw new Error(err.detail || "Rename failed");
         }
 
         // 4. Fallback: Fetch -> Save New -> Delete Old
@@ -3567,7 +3745,7 @@ async function finishRename(input, container, strong, isBlur) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
-        
+
         if (!resSave.ok) {
             const err = await resSave.json();
             throw new Error(err.error || err.detail || "Failed to save new name");
@@ -3577,8 +3755,8 @@ async function finishRename(input, container, strong, isBlur) {
         await fetch(`/api/notebooks/${encodeURIComponent(oldName)}`, { method: 'DELETE' });
 
         // Success: Update UI
-        loadSavedNotebooks(); 
-            
+        loadSavedNotebooks();
+
         // If active notebook was renamed, update globals
         if (currentNotebookId === 'notebook_' + oldName) {
             currentNotebookId = 'notebook_' + newName;
@@ -3844,26 +4022,26 @@ async function openSavedNotebook(notebookName) {
 async function uploadFile() {
     const fileInput = document.getElementById('file-input');
     const statusDiv = document.getElementById('upload-status');
-    
+
     if (!fileInput.files || fileInput.files.length === 0) {
         statusDiv.innerHTML = '<span style="color: #ef4444;">Please select a file first.</span>';
         return;
     }
-    
+
     const file = fileInput.files[0];
     const formData = new FormData();
     formData.append('file', file);
-    
+
     statusDiv.innerHTML = '<span style="color: var(--text-secondary);">Uploading and processing... <span class="pulse-icon" style="display:inline-block;width:8px;height:8px;background:var(--text-secondary);border-radius:50%;"></span></span>';
-    
+
     try {
         const response = await fetch('/api/upload_file', {
             method: 'POST',
             body: formData
         });
-        
+
         const result = await response.json();
-        
+
         if (response.ok) {
             statusDiv.innerHTML = `<div style="color: #10b981; font-weight: 500;">✅ ${result.message}</div>`;
             // Show context-aware suggestion chips for uploaded file
@@ -3871,6 +4049,26 @@ async function uploadFile() {
             updateSuggestionChips(getSuggestionsForFile(fileName));
             // Optional: clear input
             fileInput.value = '';
+
+            // Ask user if they'd like to index for RAG
+            setTimeout(async () => {
+                const wantToindex = confirm(`Would you like to index '${fileName}' for AI Semantic Search (RAG)?\n\nThis allows the AI to deeply read and compare text, but may take a few moments.`);
+                if (wantToindex) {
+                    statusDiv.innerHTML = '<span style="color: var(--text-secondary);">Starting background indexing...</span>';
+                    try {
+                        const ragResp = await fetch('/api/index_rag', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ source_name: fileName })
+                        });
+                        const ragResult = await ragResp.json();
+                        statusDiv.innerHTML = `<div style="color: #10b981; font-weight: 500;">✅ ${ragResult.message}</div>`;
+                    } catch (err) {
+                        statusDiv.innerHTML = `<span style="color: #ef4444;">Failed to start indexing: ${err.message}</span>`;
+                    }
+                }
+            }, 300);
+
         } else {
             statusDiv.innerHTML = `<span style="color: #ef4444;">Error: ${result.detail || 'Upload failed'}</span>`;
         }
@@ -3879,3 +4077,50 @@ async function uploadFile() {
     }
 }
 
+// Fetch settings when the settings drawer is opened
+async function loadLLMSettings() {
+    try {
+        const resp = await fetch('/api/llm/settings');
+        const config = await resp.json();
+
+        document.getElementById('llm-provider').value = config.provider || 'custom';
+        document.getElementById('llm-openai-model').value = config.openai_model || 'gpt-4o';
+    } catch (e) {
+        console.error("Failed to load LLM settings", e);
+    }
+}
+
+// Save settings back to the server
+async function saveLLMSettings() {
+    const data = {
+        provider: document.getElementById('llm-provider').value,
+        openai_model: document.getElementById('llm-openai-model').value
+    };
+
+    try {
+        const resp = await fetch('/api/llm/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        const result = await resp.json();
+
+        const statusEl = document.getElementById('llm-status-msg');
+        statusEl.innerText = result.message || "Settings Saved!";
+        setTimeout(() => statusEl.innerText = "", 3000);
+    } catch (e) {
+        await customAlert("Failed to save settings: " + e.message);
+    }
+}
+
+// Update your existing toggleDrawer function to fetch settings when opened
+const originalToggleDrawer = window.toggleDrawer;
+window.toggleDrawer = function (drawerName) {
+    if (drawerName === 'settings') {
+        loadLLMSettings(); // Load values every time user opens the settings tab
+    }
+    // Call the original function to handle the animation and closing other drawers
+    if (originalToggleDrawer) {
+        originalToggleDrawer(drawerName);
+    }
+};

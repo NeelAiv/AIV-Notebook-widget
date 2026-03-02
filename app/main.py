@@ -1,6 +1,6 @@
-from fastapi import FastAPI, Request, HTTPException, UploadFile, File
+from fastapi import FastAPI, Request, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi import UploadFile, File
 import uvicorn
 import sys
@@ -9,6 +9,7 @@ import json
 from io import StringIO
 import datetime
 import nbformat 
+from nbformat.v4 import new_notebook, new_code_cell, new_markdown_cell, new_output
 
 
 # Custom Modules - Ensure these exist in app/db/
@@ -44,12 +45,30 @@ async def get_index():
 @app.post("/query")
 async def run_ai_query(req: QueryRequest):
     try:
-        # Pass all 3 arguments to the Orchestrator
+        # 1. If user attached text/csv files via chat, set them as the active context
+        if req.datasets:
+            combined_text = "\n\n".join([f"--- File: {d.get('filename')} ---\n{d.get('content')}" for d in req.datasets])
+            orchestrator.set_file_context(combined_text)
+
+        # 2. Retrieve images from chat history if current request has none
+        active_images = list(req.images) if req.images else []
+        if not active_images and req.chat_history:
+            # Look backwards for most recent images attached in this chat history
+            for msg in reversed(req.chat_history):
+                if isinstance(msg, dict) and msg.get("images"):
+                    active_images = msg["images"]
+                    break
+
+        # Pass all arguments to the Orchestrator
         result = orchestrator.route_and_execute(
             req.prompt, 
             req.notebook_cells, 
             req.variables,
-            req.chat_history
+            req.chat_history,
+            images=active_images,
+            is_modification=req.is_modification,
+            original_code=req.original_code,
+            active_cell_id=req.active_cell_id
         )
         
         history_manager.add_to_history(
@@ -65,12 +84,126 @@ async def run_ai_query(req: QueryRequest):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
 
+from app.db.vector_store import vector_store
+
+def process_and_index_rag(text_data: str, source_name: str):
+    """Runs in the background: Chunks text, gets embeddings, saves to ChromaDB"""
+    chunks = text_data.split('\n')
+    valid_chunks = []
+    embeddings = []
+    
+    for chunk in chunks:
+        if not chunk.strip(): continue
+        try:
+            vec = orchestrator.embedder.get_embedding(chunk)
+            valid_chunks.append(chunk)
+            embeddings.append(vec)
+        except Exception as e:
+            print(f"Error embedding chunk: {e}")
+            
+    vector_store.add_chunks(source_name, valid_chunks, embeddings)
+    print(f"✅ Finished indexing {source_name} for RAG into ChromaDB!")
+
+def process_and_index_table(table_name: str):
+    """Retrieves all rows from a DB table, embeds them, and saves to ChromaDB."""
+    print(f"Starting to index table '{table_name}'...")
+    db = orchestrator.db
+    if not db.engine:
+        print("No active DB connection to index table.")
+        return
+
+    # Basic fetch (we assume table size is manageable for a demo. In production, paginate)
+    query = f"SELECT * FROM {table_name}"
+    rows = db.execute_query(query)
+    
+    if not rows:
+        print(f"⚠️ Table {table_name} is empty or unreadable.")
+        return
+
+    valid_chunks = []
+    embeddings = []
+    
+    for row in rows:
+        # Convert dictionary row into a clean string representation
+        # Ex: "id: 1, name: parth, product: Apple"
+        row_str = ", ".join([f"{k}: {v}" for k, v in row.items()])
+        try:
+            vec = orchestrator.embedder.get_embedding(row_str)
+            valid_chunks.append(row_str)
+            embeddings.append(vec)
+        except Exception:
+            continue
+            
+    vector_store.add_chunks(table_name, valid_chunks, embeddings)
+    print(f"✅ Finished indexing table '{table_name}' for RAG into ChromaDB!")
+
+@app.post("/api/index_rag")
+async def trigger_rag_indexing(req: Request, background_tasks: BackgroundTasks):
+    data = await req.json()
+    source_name = data.get('source_name', 'unknown_file')
+    text_content = orchestrator.active_file_context  # The file they just uploaded
+    
+    if not text_content:
+        return {"status": "error", "message": "No active file context found to index."}
+    
+    # Send the heavy lifting to the background so the API returns instantly
+    background_tasks.add_task(process_and_index_rag, text_content, source_name)
+    
+    return {"status": "indexing_started", "message": f"Indexing {source_name} in the background..."}
+
+@app.post("/api/index_table")
+async def trigger_table_indexing(req: Request, background_tasks: BackgroundTasks):
+    data = await req.json()
+    table_name = data.get('table_name')
+    if not table_name:
+        return {"status": "error", "message": "No table name provided."}
+        
+    background_tasks.add_task(process_and_index_table, table_name)
+    return {"status": "indexing_started", "message": f"Indexing table '{table_name}' in the background..."}
+
+@app.get("/api/vector_memory")
+async def get_vector_memory():
+    """Returns a list of all unique data sources currently in the ChromaDB RAG."""
+    try:
+        data = vector_store.collection.get()
+        metas = data.get("metadatas", [])
+        
+        sources = set()
+        for m in metas:
+            if m and "source" in m:
+                sources.add(m["source"])
+                
+        return {"sources": list(sources)}
+    except Exception as e:
+        return {"sources": [], "error": str(e)}
+
+@app.delete("/api/vector_memory/{source_name}")
+async def delete_vector_memory(source_name: str):
+    """Deletes a specific data source from the ChromaDB RAG."""
+    try:
+        vector_store.collection.delete(where={"source": source_name})
+        return {"status": "success", "message": f"Deleted '{source_name}' from memory."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/tables")
+async def get_db_tables():
+    """Returns the list of tables from the active connection to power the Semantic Search UI."""
+    db = orchestrator.db
+    if not db.engine:
+        return {"tables": []}
+    schema = db.get_schema()
+    tables = set()
+    for row in schema:
+        tables.add(row['table_name'])
+    return {"tables": list(tables)}
+
 @app.post("/api/upload_file")
 async def upload_file(file: UploadFile = File(...)):
     """
     Uploads a file, extracts text, and sets it as context for the Orchestrator.
     """
-    ALLOWED_EXTENSIONS = {".txt", ".pdf", ".docx"}
+    ALLOWED_EXTENSIONS = {".txt", ".pdf", ".docx", ".csv", ".py", ".js", ".json", ".ipynb", ".html", ".css", ".md"}
     filename = file.filename
     ext = os.path.splitext(filename)[1].lower()
 
@@ -91,7 +224,18 @@ async def upload_file(file: UploadFile = File(...)):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process file: {str(e)}")
+        
+@app.get("/api/llm/settings")
+async def get_llm_settings():
+    """Returns current LLM configuration"""
+    return orchestrator.llm.config
 
+@app.post("/api/llm/settings")
+async def save_llm_settings(req: Request):
+    """Saves new LLM configuration"""
+    data = await req.json()
+    orchestrator.llm.update_config(data)
+    return {"status": "success", "message": "LLM Settings updated"}
 @app.get("/api/connections")
 async def list_conns(): return config_manager.get_all_configs()
 
@@ -150,36 +294,85 @@ async def delete_history(item_id: int):
     history_manager.delete_history_item(item_id)
     return {"status": "deleted"}
 
+# In main.py
 @app.delete("/api/notebooks/{name}")
 async def delete_notebook(name: str):
-    filepath = f'notebooks/{name}.json'
+    filepath = f'notebooks/{name}.ipynb'
+    json_filepath = f'notebooks/{name}.json'
+    deleted = False
+    
     if os.path.exists(filepath):
         os.remove(filepath)
+        deleted = True
+        
+    if os.path.exists(json_filepath):
+        os.remove(json_filepath)
+        deleted = True
+        
+    if deleted:
         return {"status": "deleted"}
+        
     raise HTTPException(status_code=404, detail="Notebook not found")
 
 @app.post("/api/notebooks/save")
 async def save_notebook(req: Request):
-    data = await req.json()
-    name = data['name']
-    cells = data['cells']
-    # Multi-chat data (new format)
-    chat_data = data.get('chat_data', {})
-    # Legacy flat chat_history (backward compatibility)
-    chat_history = data.get('chat_history', [])
-    
-    filepath = f'notebooks/{name}.json'
+    try:
+        data = await req.json()
+        name = data.get('name')
+        cells_data = data.get('cells', [])
+        chat_data = data.get('chat_data')
+        
+        if not name:
+            raise HTTPException(status_code=400, detail="Notebook name is required.")
 
-    # Prepare data structure with both new and legacy chat formats
-    notebook_data = {
-        "cells": cells,
-        "chat_data": chat_data,
-        "chat_history": chat_history
-    }
-    
-    with open(filepath, 'w') as f:
-        json.dump(notebook_data, f)
-    return {"status": "saved"}
+        # --- LOGIC TO BUILD A VALID JUPYTER NOTEBOOK ---
+        
+        # 1. Create a new, empty notebook structure
+        nb = new_notebook()
+        
+        if chat_data:
+            nb.metadata['chat_data'] = chat_data
+        
+        # 2. Loop through the cell data from the frontend and convert each one
+        for cell_data in cells_data:
+            cell_type = cell_data.get("cell_type")
+            source = cell_data.get("source", "")
+            
+            if cell_type == "code":
+                # Create a new code cell
+                code_cell = new_code_cell(source=source)
+                
+                # Handle outputs (this is a simplified conversion)
+                # A true .ipynb output is complex, but this makes it readable.
+                if "output" in cell_data and cell_data["output"]:
+                    # Create a standard display_data output object
+                    output_node = new_output(
+                        output_type="display_data",
+                        data={"text/html": cell_data["output"]}
+                    )
+                    code_cell.outputs.append(output_node)
+                    
+                nb.cells.append(code_cell)
+                
+            elif cell_type == "markdown":
+                # Create a new markdown cell
+                md_cell = new_markdown_cell(source=source)
+                nb.cells.append(md_cell)
+
+        # 3. Define the filename with the correct .ipynb extension
+        filepath = f'notebooks/{name}.ipynb'
+        
+        # 4. Use the nbformat library to write the file correctly
+        with open(filepath, 'w', encoding='utf-8') as f:
+            nbformat.write(nb, f)
+            
+        print(f"✅ Successfully saved notebook to: {filepath}")
+        return {"status": "saved", "filename": f"{name}.ipynb"}
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to save notebook: {str(e)}")
 @app.delete("/api/connections/{name}")
 async def delete_db_connection(name: str):
     try:
@@ -221,11 +414,15 @@ async def rename_notebook(req: Request):
     if not old_name or not new_name:
         raise HTTPException(status_code=400, detail="Missing old_name or new_name")
         
-    old_path = f'notebooks/{old_name}.json'
-    new_path = f'notebooks/{new_name}.json'
+    old_path = f'notebooks/{old_name}.ipynb'
+    new_path = f'notebooks/{new_name}.ipynb'
     
     if not os.path.exists(old_path):
-        raise HTTPException(status_code=404, detail="Notebook not found")
+        old_path = f'notebooks/{old_name}.json'
+        new_path = f'notebooks/{new_name}.json'
+        if not os.path.exists(old_path):
+            raise HTTPException(status_code=404, detail="Notebook not found")
+            
     if os.path.exists(new_path):
         raise HTTPException(status_code=409, detail="Notebook with this name already exists")
         
@@ -245,39 +442,21 @@ async def upload_notebook(file: UploadFile = File(...)):
         content = await file.read()
         nb = nbformat.reads(content.decode('utf-8'), as_version=4)
         
-        converted_cells = []
-        for cell in nb.cells:
-            cell_data = {
-                "cell_type": cell.cell_type,
-                "source": cell.source,
-                "outputs": []
-            }
-            
-            if cell.cell_type == 'code' and hasattr(cell, 'outputs'):
-                for output in cell.outputs:
-                    if output.output_type == 'stream':
-                        cell_data["outputs"].append(output.text)
-                    elif output.output_type == 'execute_result':
-                        cell_data["outputs"].append(str(output.data.get('text/plain', '')))
-            
-            converted_cells.append(cell_data)
-        
         name = file.filename.replace('.ipynb', '')
-        filepath = f'notebooks/{name}.json'
+        filepath = f'notebooks/{name}.ipynb'
         
         counter = 1
         while os.path.exists(filepath):
-            filepath = f'notebooks/{name}_{counter}.json'
+            filepath = f'notebooks/{name}_{counter}.ipynb'
             counter += 1
         
-        with open(filepath, 'w') as f:
-            json.dump(converted_cells, f)
-        
-        return {"status": "uploaded", "name": name, "cells_count": len(converted_cells)}
-    
+        with open(filepath, 'w', encoding='utf-8') as f:
+            nbformat.write(nb, f)
+            
+        return {"status": "uploaded", "name": name, "cells_count": len(nb.cells)}
     except Exception as e:
-        return {"error": f"Failed to process notebook: {str(e)}"}
-
+        print(f"!!! ERROR SAVING NOTEBOOK: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to write .ipynb file: {str(e)}")
 
 # List all saved notebooks
 @app.get("/api/notebooks")
@@ -285,118 +464,102 @@ async def list_notebooks():
     nb_list = []
     if os.path.exists('notebooks'):
         for filename in os.listdir('notebooks'):
-            if filename.endswith('.json'):
-                path = os.path.join('notebooks', filename)
-                # This gets the time the file was saved
-                mtime = os.path.getmtime(path)
-                dt = datetime.datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M')
-                nb_list.append({
-                    "display_name": filename.replace('.json', ''),
-                    "timestamp": dt
-                })
-    # Sort so newest is at the top
-    return sorted(nb_list, key=lambda x: x['timestamp'], reverse=True)
-
-# ⭐ NEW ENDPOINT: Open a specific saved notebook
-@app.get("/api/notebooks/{name}")
-async def get_notebook(name: str):
-    filepath = f'notebooks/{name}.json'
-    if not os.path.exists(filepath):
-        return {"error": "Notebook not found"}
-    
-    with open(filepath, 'r') as f:
-        data = json.load(f)
-    
-    # Backward compatibility
-    if isinstance(data, list):
-        return {"cells": data, "chat_history": []}
-        
-    return data
-
-
-# Add this new endpoint for uploading .ipynb files
-@app.post("/api/notebooks/upload")
-async def upload_notebook(file: UploadFile = File(...)):
-    if not file.filename.endswith('.ipynb'):
-        return {"error": "Only .ipynb files are allowed"}
-    
-    try:
-        # Read the uploaded file
-        content = await file.read()
-        nb = nbformat.reads(content.decode('utf-8'), as_version=4)
-        
-        # Convert Jupyter notebook cells to your internal format
-        converted_cells = []
-        for cell in nb.cells:
-            cell_data = {
-                "type": cell.cell_type,  # 'code' or 'markdown'
-                "content": cell.source,
-                "output": ""
-            }
-            
-            # If it's a code cell with outputs, capture them
-            if cell.cell_type == 'code' and hasattr(cell, 'outputs'):
-                outputs = []
-                for output in cell.outputs:
-                    if output.output_type == 'stream':
-                        outputs.append(output.text)
-                    elif output.output_type == 'execute_result':
-                        outputs.append(str(output.data.get('text/plain', '')))
-                    elif output.output_type == 'error':
-                        outputs.append(f"Error: {output.ename}: {output.evalue}")
-                cell_data["output"] = '\n'.join(outputs)
-            
-            converted_cells.append(cell_data)
-        
-        # Save with original filename (without .ipynb extension)
-        name = file.filename.replace('.ipynb', '')
-        filepath = f'notebooks/{name}.json'
-        
-        # Handle duplicate names
-        counter = 1
-        while os.path.exists(filepath):
-            filepath = f'notebooks/{name}_{counter}.json'
-            counter += 1
-        
-        with open(filepath, 'w') as f:
-            json.dump(converted_cells, f)
-        
-        return {"status": "uploaded", "name": name, "cells_count": len(converted_cells)}
-    
-    except Exception as e:
-        return {"error": f"Failed to process notebook: {str(e)}"}
-
-# Modify the list_notebooks endpoint to show file type
-@app.get("/api/notebooks")
-async def list_notebooks():
-    nb_list = []
-    if os.path.exists('notebooks'):
-        for filename in os.listdir('notebooks'):
-            if filename.endswith('.json'):
+            if filename.endswith('.ipynb'): 
                 path = os.path.join('notebooks', filename)
                 mtime = os.path.getmtime(path)
                 dt = datetime.datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M')
                 
-                # Count cells
+                cell_count = 0
                 try:
-                    with open(path, 'r') as f:
+                    with open(path, 'r', encoding='utf-8') as f:
+                        nb = nbformat.read(f, as_version=4)
+                        cell_count = len(nb.cells)
+                except Exception as e:
+                    print(f"Warning: Could not read cell count from {filename}: {e}")
+
+                nb_list.append({
+                    "display_name": filename.replace('.ipynb', ''),
+                    "timestamp": dt,
+                    "cell_count": cell_count
+                })
+            elif filename.endswith('.json'):
+                # Legacy json fallback
+                path = os.path.join('notebooks', filename)
+                mtime = os.path.getmtime(path)
+                dt = datetime.datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M')
+                try:
+                    with open(path, 'r', encoding='utf-8') as f:
                         data = json.load(f)
-                    
-                    # Handle both list (legacy) and dict (new) formats
-                    if isinstance(data, list):
-                        cell_count = len(data)
-                    else:
-                        cell_count = len(data.get("cells", []))
-                    
+                    cell_count = len(data) if isinstance(data, list) else len(data.get("cells", []))
                     nb_list.append({
                         "display_name": filename.replace('.json', ''),
                         "timestamp": dt,
                         "cell_count": cell_count
                     })
-                except Exception as e:
-                    print(f"Error reading {filename}: {e}")
+                except:
+                    pass
     
-    return sorted(nb_list, key=lambda x: x['timestamp'], reverse=True)
+    # Sort and remove duplicates by display_name, prioritizing .ipynb
+    unique_nbs = {}
+    for nb in sorted(nb_list, key=lambda x: x['timestamp'], reverse=True):
+        if nb['display_name'] not in unique_nbs:
+            unique_nbs[nb['display_name']] = nb
+            
+    return list(unique_nbs.values())
+
+# ⭐ NEW ENDPOINT: Open a specific saved notebook
+@app.get("/api/notebooks/{name}")
+async def get_notebook(name: str):
+    filepath = f'notebooks/{name}.ipynb'
+    if not os.path.exists(filepath):
+        json_filepath = f'notebooks/{name}.json'
+        if os.path.exists(json_filepath):
+            with open(json_filepath, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return {"cells": data, "chat_history": []}
+            return data
+        return {"error": "Notebook not found"}
+    
+@app.get("/api/notebooks/{name}/download")
+async def download_notebook(name: str):
+    filepath = f'notebooks/{name}.ipynb'
+    if not os.path.exists(filepath):
+        json_filepath = f'notebooks/{name}.json'
+        if os.path.exists(json_filepath):
+            return FileResponse(json_filepath, media_type='application/json', filename=f"{name}.json")
+        raise HTTPException(status_code=404, detail="Notebook not found")
+        
+    return FileResponse(filepath, media_type='application/x-ipynb+json', filename=f"{name}.ipynb")
+
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            nb = nbformat.read(f, as_version=4)
+            
+        cells = []
+        for cell in nb.cells:
+            cell_data = {
+                "cell_type": cell.cell_type,
+                "source": cell.source,
+                "output": ""
+            }
+            if cell.cell_type == 'code' and hasattr(cell, 'outputs'):
+                outputs = []
+                for output in cell.outputs:
+                    if output.output_type == 'display_data' and 'text/html' in output.data:
+                        outputs.append(output.data['text/html'])
+                    elif output.output_type == 'stream':
+                        outputs.append(output.text)
+                    elif output.output_type == 'execute_result':
+                        outputs.append(str(output.data.get('text/plain', '')))
+                cell_data["output"] = '\n'.join(outputs)
+            cells.append(cell_data)
+            
+        chat_data = nb.metadata.get('chat_data')
+        return {"cells": cells, "chat_data": chat_data}
+        
+    except Exception as e:
+        return {"error": f"Failed to read notebook: {str(e)}"}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8090)

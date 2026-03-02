@@ -1,16 +1,97 @@
-# --- START OF FILE app/core/remote_llm.py (MODIFIED) ---
 import requests
+import json
 import os
-import json # Import json for handling JSONDecodeError
+from openai import OpenAI
 
-class LLMClient: # Renamed from RemoteLLMClient
+CONFIG_FILE = "llm_config.json"
+
+# 👉 Define your OpenAI API key here
+OPENAI_API_KEY = ""
+
+class LLMClient:
     def __init__(self):
-        # Your remote LLM server URL, based on your prompt
-        self.llm_server_url = "http://138.201.254.240:8098/v1/chat"
-        print(f"🧠 Using Remote LLM Server: {self.llm_server_url}")
+        self.custom_server_url = "http://138.201.254.240:8098/v1/chat"
+        self.load_config()
 
-    # Modified signature to accept system and user messages separately
-    def generate(self, system_message: str, user_message: str):
+    def load_config(self):
+        """Loads LLM settings from JSON file and initializes the active client."""
+        # Default configuration
+        self.config = {
+            "provider": "custom", # 'custom' or 'openai'
+            "openai_model": "gpt-4o" # default model
+        }
+        
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, "r") as f:
+                    file_config = json.load(f)
+                    if "provider" in file_config:
+                        self.config["provider"] = file_config["provider"]
+                    if "openai_model" in file_config:
+                        self.config["openai_model"] = file_config["openai_model"]
+            except json.JSONDecodeError:
+                pass
+
+        if self.config["provider"] == "openai" and OPENAI_API_KEY:
+            self.openai_client = OpenAI(api_key=OPENAI_API_KEY)
+            print(f"🧠 Using OpenAI Provider (Model: {self.config['openai_model']})")
+        else:
+            if self.config["provider"] == "openai":
+                print("⚠️ OpenAI selected but OPENAI_API_KEY is missing in remote_llm.py. Falling back to custom.")
+            self.config["provider"] = "custom"
+            self.openai_client = None
+            print(f"🧠 Using Custom Remote LLM Server: {self.custom_server_url}")
+
+    def update_config(self, new_config: dict):
+        """Updates and saves the configuration."""
+        if "provider" in new_config:
+            self.config["provider"] = new_config["provider"]
+        if "openai_model" in new_config:
+            self.config["openai_model"] = new_config["openai_model"]
+            
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(self.config, f, indent=4)
+        self.load_config() # Reload the client with new settings
+
+    def generate(self, system_message: str, user_message: str, images: list = None):
+        """Routes the prompt to the active provider."""
+        if self.config["provider"] == "openai" and self.openai_client:
+            return self._generate_openai(system_message, user_message, images)
+        return self._generate_custom(system_message, user_message, images)
+
+    def _generate_openai(self, system_message: str, user_message: str, images: list = None):
+        messages = [{"role": "system", "content": system_message}]
+        
+        # If images are provided, use the OpenAI vision array format
+        if images:
+            content_array = [{"type": "text", "text": user_message}]
+            for img_b64 in images:
+                content_array.append({
+                    "type": "image_url",
+                    "image_url": {"url": img_b64} # Already contains data:image/png;base64,...
+                })
+            messages.append({"role": "user", "content": content_array})
+        else:
+            # Standard text-only format
+            messages.append({"role": "user", "content": user_message})
+
+        try:
+            response = self.openai_client.chat.completions.create(
+                model=self.config["openai_model"],
+                messages=messages,
+                temperature=0.2 
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"❌ OpenAI API Error: {e}")
+            return f"Error connecting to OpenAI: {str(e)}"
+
+    def _generate_custom(self, system_message: str, user_message: str, images: list = None):
+        # Notify the local LLM that an image was provided, just in case it's a text-only model
+        if images:
+            user_message = f"[User attached {len(images)} image(s)]\n" + user_message
+
+        # Your existing custom prompt formatting
         full_prompt = f"""<|system|>
 {system_message}
 <|end|>
@@ -23,29 +104,14 @@ class LLMClient: # Renamed from RemoteLLMClient
         payload = {"prompt": full_prompt}
 
         try:
-            response = requests.post(self.llm_server_url, headers=headers, json=payload, timeout=300) # Added timeout
-            response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
-            
+            response = requests.post(self.custom_server_url, headers=headers, json=payload, timeout=300)
+            response.raise_for_status()
             json_response = response.json()
-            # The remote server's response format shows 'response' as the key
-            generated_text = json_response.get("response", "").strip()
-            
-            # If the remote LLM also includes the <|assistant|> tag, you might still need this split.
-            # Based on your curl output, it seems the remote server already provides the clean answer.
-            # If it still includes the tags, uncomment the line below:
-            # return generated_text.split("<|assistant|>")[-1].strip()
-            
-            return generated_text
-
+            return json_response.get("response", "").strip()
         except requests.exceptions.Timeout:
-            print(f"❌ Error: Remote LLM server timed out after 300 seconds.")
             return "Error: Remote LLM server timed out."
-        except requests.exceptions.RequestException as e:
-            print(f"❌ Error connecting to Remote LLM Server: {e}")
-            return f"Error: Could not connect to remote LLM server. {str(e)}"
-        except json.JSONDecodeError:
-            print(f"❌ Error: Could not decode JSON from remote LLM server response: {response.text}")
-            return "Error: Invalid JSON response from remote LLM server."
+        except Exception as e:
+            return f"Error connecting to Custom LLM: {str(e)}"
 
-# Singleton instance for easy import
-llm_instance = LLMClient() # Renamed instance
+# Singleton instance
+llm_instance = LLMClient()

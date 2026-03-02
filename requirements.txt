@@ -14,3 +14,7 @@ requests
 pypdf
 python-docx
 python-multipart
+openai
+sqlalchemy 
+pymysql
+chromadb

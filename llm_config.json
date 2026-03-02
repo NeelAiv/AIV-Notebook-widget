@@ -1,0 +1,4 @@
+{
+    "provider": "openai",
+    "openai_model": "gpt-4o"
+}
