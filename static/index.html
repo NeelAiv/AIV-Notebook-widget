@@ -264,7 +264,7 @@
                         <p style="margin-bottom: 12px; font-size: 0.9rem; color: var(--text-secondary);">Select a
                             document (PDF, DOCX, TXT, CSV), script (.py, .js) or notebook to upload.</p>
                         <input type="file" id="file-input"
-                            accept=".txt,.pdf,.docx,.csv,.py,.js,.json,.ipynb,.md,.html,.css"
+                            accept=".txt,.pdf,.docx,.csv,.py,.js,.json,.ipynb,.md,.html,.css,.xlsx,.xls,.png,.jpg,.jpeg,.webp"
                             style="display: block; margin-bottom: 16px; width: 100%; font-size: 0.9rem;">
                         <button id="upload-btn" onclick="uploadFile()"
                             style="width: 100%; padding: 10px; background: var(--accent); color: white; border: none; border-radius: var(--radius-sm); cursor: pointer; font-weight: 500;">Upload
@@ -442,7 +442,8 @@
                     <div class="ai-input-toolbar">
                         <div class="ai-toolbar-left">
                             <input type="file" id="ai-file-input"
-                                accept=".pdf,.xlsx,.xls,.csv,.json,.txt,.docx,.png,.jpg,.jpeg,.webp" multiple hidden>
+                                accept=".txt,.pdf,.docx,.csv,.py,.js,.json,.ipynb,.md,.html,.css,.xlsx,.xls,.png,.jpg,.jpeg,.webp"
+                                multiple hidden>
                             <button id="ai-attach-btn" class="ai-input-icon-plus" type="button" aria-label="Attach file"
                                 title="Upload files or images">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
@@ -454,7 +455,15 @@
                             </button>
                         </div>
 
-                        <div class="ai-toolbar-right">
+                        <div class="ai-toolbar-right" style="display: flex; align-items: center; gap: 8px;">
+                            <label class="toggle-switch-db" title="Include Database Schema in AI Context">
+                                <span class="db-toggle-label"
+                                    style="font-size:0.75rem; color:var(--text-secondary); font-family:var(--font-primary); white-space:nowrap;">Use
+                                    DB Context</span>
+                                <input type="checkbox" id="ai-use-db-toggle">
+                                <span class="slider round"></span>
+                            </label>
+
                             <button id="ai-mic-btn" class="ai-input-icon" type="button" aria-label="Voice input"
                                 title="Voice input">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"

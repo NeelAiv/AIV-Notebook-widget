@@ -465,7 +465,7 @@ function flashCellUpdated(cellEl) {
     cellEl.classList.add('ai-cell-updated');
     setTimeout(() => {
         cellEl.classList.remove('ai-cell-updated');
-    }, 1200);
+    }, 2500);
 }
 
 function escapeHtml(text) {
@@ -670,6 +670,27 @@ function applyPendingCodeProposal(runAfterApply = false) {
 
     if (proposal.mode === 'diff') {
         setCodeToEditor(editor, proposal.newCode);
+
+        // Highlight new/changed lines with Colab-style green
+        const cmEl = editor.nextSibling;
+        if (cmEl && cmEl.classList && cmEl.classList.contains('CodeMirror')) {
+            const cm = cmEl.CodeMirror;
+            if (cm) {
+                // Clear old highlights just in case
+                for (let i = 0; i < cm.lineCount(); i++) {
+                    cm.removeLineClass(i, 'background', 'cm-new-code-highlight');
+                }
+                const oldLines = proposal.originalCode ? proposal.originalCode.split('\n') : [];
+                const newLines = proposal.newCode.split('\n');
+
+                for (let i = 0; i < newLines.length; i++) {
+                    // Simple diff check: if line is not in the original code, highlight it as new
+                    if (!oldLines.includes(newLines[i].trim() ? newLines[i] : null)) {
+                        cm.addLineClass(i, 'background', 'cm-new-code-highlight');
+                    }
+                }
+            }
+        }
     } else if (proposal.proposalType === 'new' && cell?.dataset) {
         // Accepting a new preview converts it to a normal, permanent cell.
         delete cell.dataset.aiPreviewCell;
@@ -1133,11 +1154,41 @@ async function runCode(id) {
 
     } catch (e) {
         flushOutput();
-        outDiv.innerHTML += `<div style="color:#ef4444; margin-top:5px;"><strong>Error:</strong> ${e.message}</div>`;
+        const errorStack = e.message || String(e);
+        const errorSample = errorStack.length > 800 ? errorStack.substring(0, 800) + '...' : errorStack;
+
+        const debugHtml = `<button class="ai-debug-btn" onclick="debugCellError(${id})" style="background:var(--accent); color:white; border:none; border-radius:3px; padding:4px 8px; font-size:0.75rem; cursor:pointer; margin-left:10px; vertical-align:middle; display:inline-flex; align-items:center; gap:4px;"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.21 1.21 0 0 0 0-1.72Z"/><path d="m14 7 3 3"/><path d="M5 6v4"/><path d="M19 14v4"/><path d="M10 2v2"/><path d="M7 8H5.5C5.1 8 4.7 8.1 4.4 8.4L2.8 10l5.4 5.4 1.6-1.6c.3-.3.4-.7.4-1.1v-1.5"/><path d="M10 22v-2"/></svg> Debug with AI</button>`;
+
+        outDiv.innerHTML += `<div style="color:#ef4444; margin-top:5px; line-height:1.4;"><strong>Error:</strong> ${errorStack} <div style="margin-top:8px;">${debugHtml}</div></div>`;
+        outDiv.setAttribute("data-last-error", errorSample);
+
         // Show error-specific suggestion chips
         updateSuggestionChips(getSuggestionsForCode(code, true, false, false));
     } finally {
         btn.innerText = "▶";
+    }
+}
+
+async function debugCellError(id) {
+    const codeEditor = document.querySelector(`#cell-${id} .code-editor`);
+    if (!codeEditor) return;
+
+    const outDiv = document.getElementById(`out-${id}`);
+    const errorTrace = outDiv.getAttribute("data-last-error") || "Unknown error";
+
+    // Shorten the prompt request
+    const prompt = `Fix the error in this code:\n\nError:\n${errorTrace}`;
+
+    // Activate the cell so AI knows context
+    const cellEl = document.getElementById(`cell-${id}`);
+    if (cellEl) activateCell(cellEl);
+
+    // Fill the AI prompt and automatically submit
+    const aiInput = document.getElementById("prompt-input");
+    if (aiInput) {
+        aiInput.value = prompt;
+        focusAI();
+        await runAIQuery();
     }
 }
 // 1. REVISED ADD CODE CELL
@@ -1790,13 +1841,13 @@ async function runAIQuery() {
             });
             base64Images.push(base64);
         } else {
-            // Treat as text dataset
-            const textContent = await new Promise((resolve) => {
+            // Read all files as base64 to support binary formats like pdf, docx, xlsx
+            const base64Content = await new Promise((resolve) => {
                 const reader = new FileReader();
                 reader.onload = (e) => resolve(e.target.result);
-                reader.readAsText(file);
+                reader.readAsDataURL(file);
             });
-            uploadedTextFiles.push({ filename: file.name, content: textContent });
+            uploadedTextFiles.push({ filename: file.name, content: base64Content });
         }
     }
 
@@ -1873,19 +1924,22 @@ async function runAIQuery() {
         currentAbortController = new AbortController();
         setAILoading(true);
 
+        const useDbContext = document.getElementById('ai-use-db-toggle') ? document.getElementById('ai-use-db-toggle').checked : false;
+
         let reqPayload = {
             prompt: prompt,
             notebook_cells: cells,
             variables: activeVars,
             chat_history: chatHistory,
             images: base64Images,
-            datasets: uploadedTextFiles
+            datasets: uploadedTextFiles,
+            use_db_context: useDbContext
         };
 
         const pL = prompt.toLowerCase();
         if (pL.includes("fix") || pL.includes("update") || pL.includes("change") || pL.includes("modify")) {
             reqPayload.is_modification = true;
-            reqPayload.active_cell_id = lastActiveCellId;
+            reqPayload.active_cell_id = lastActiveCellId ? String(lastActiveCellId) : null;
             if (lastActiveCellId) {
                 const ce = document.querySelector(`#cell-${lastActiveCellId} .code-editor`);
                 if (ce) {
@@ -4124,3 +4178,130 @@ window.toggleDrawer = function (drawerName) {
         originalToggleDrawer(drawerName);
     }
 };
+
+// --- Image Enlarge Modal for AI Chat ---
+document.addEventListener("DOMContentLoaded", () => {
+    // 1. Create Modal Container
+    const modal = document.createElement("div");
+    modal.id = "ai-image-modal";
+    modal.style.cssText = `
+        display: none;
+        position: fixed;
+        top: 0; left: 0; width: 100vw; height: 100vh;
+        background: rgba(0, 0, 0, 0.85);
+        z-index: 100000;
+        justify-content: center;
+        align-items: center;
+        backdrop-filter: blur(4px);
+        opacity: 0;
+        transition: opacity 0.2s ease;
+    `;
+
+    // 2. Create Modal Image
+    const modalImg = document.createElement("img");
+    modalImg.style.cssText = `
+        max-width: 90vw;
+        max-height: 90vh;
+        border-radius: 8px;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+        object-fit: contain;
+        transform: scale(0.95);
+        transition: transform 0.1s ease;
+    `;
+    modal.appendChild(modalImg);
+    document.body.appendChild(modal);
+
+    let scale = 1;
+    let isDragging = false;
+    let startX = 0, startY = 0, translateX = 0, translateY = 0;
+
+    const updateTransform = () => {
+        modalImg.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
+    };
+
+    // 3. Zoom with mouse wheel
+    modal.addEventListener("wheel", (e) => {
+        if (modal.style.display !== "flex") return;
+        e.preventDefault();
+        const zoomIntensity = 0.15;
+        const wheel = e.deltaY < 0 ? 1 : -1;
+        const newScale = scale + (wheel * zoomIntensity * scale); // Relative scaling
+        if (newScale >= 0.5 && newScale <= 15) { // Min 0.5x, Max 15x
+            scale = newScale;
+            updateTransform();
+        }
+    });
+
+    // 4. Click and Drag for Panning
+    modalImg.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        isDragging = true;
+        startX = e.clientX - translateX;
+        startY = e.clientY - translateY;
+        modalImg.style.cursor = "grabbing";
+    });
+
+    window.addEventListener("mousemove", (e) => {
+        if (!isDragging) return;
+        e.preventDefault();
+        translateX = e.clientX - startX;
+        translateY = e.clientY - startY;
+        updateTransform();
+    });
+
+    window.addEventListener("mouseup", () => {
+        if (isDragging) {
+            isDragging = false;
+            modalImg.style.cursor = "grab";
+        }
+    });
+
+    // Reset and Close logic
+    const closeModal = () => {
+        modal.style.opacity = "0";
+        setTimeout(() => {
+            modal.style.display = "none";
+            scale = 1; translateX = 0; translateY = 0; // Reset
+            updateTransform();
+        }, 200);
+    };
+
+    // Close on clicking backdrop (not the image itself)
+    modal.addEventListener("click", (e) => {
+        if (e.target === modal) {
+            closeModal();
+        }
+    });
+
+    // 5. Add Global CSS for cursor style mapping to zoomable images in chat
+    const style = document.createElement("style");
+    style.innerHTML = ".ai-msg img { cursor: zoom-in; transition: transform 0.1s; } .ai-msg img:hover { transform: scale(1.02); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }";
+    document.head.appendChild(style);
+
+    // 6. Event Delegation for any image clicked inside AI chat window
+    document.body.addEventListener("click", (e) => {
+        if (e.target.tagName && e.target.tagName.toLowerCase() === "img") {
+            // Check if the clicked image is inside the chat area (.ai-msg or .ai-content-area)
+            if (e.target.closest('.ai-msg') || e.target.closest('#ai-content-area')) {
+                modalImg.src = e.target.src;
+                modal.style.display = "flex";
+                modalImg.style.cursor = "grab";
+
+                // Initialize clean slate
+                scale = 1; translateX = 0; translateY = 0;
+                updateTransform();
+
+                // Trigger reflow & fade in
+                void modal.offsetWidth;
+                modal.style.opacity = "1";
+            }
+        }
+    });
+
+    // Handle escape key
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && modal.style.display === "flex") {
+            closeModal();
+        }
+    });
+});

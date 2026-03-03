@@ -150,6 +150,7 @@
 
     --border: #e5e7eb;
 
+    --radius-xs: 4px;
     --radius-sm: 6px;
     --radius-md: 10px;
     --radius-lg: 14px;
@@ -157,6 +158,58 @@
     --shadow-xs: 0 1px 1px rgba(0, 0, 0, 0.04);
     --shadow-sm: 0 4px 12px rgba(15, 23, 42, 0.06);
     --shadow-md: 0 10px 30px rgba(15, 23, 42, 0.10);
+}
+
+/* ======================================================
+   DB TOGGLE SWITCH (AI Toolbar)
+====================================================== */
+.toggle-switch-db {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    margin-right: 4px;
+}
+
+.toggle-switch-db input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-switch-db .slider {
+    position: relative;
+    display: inline-block;
+    width: 32px;
+    height: 18px;
+    background-color: #cbd5e1;
+    border-radius: 34px;
+    transition: .2s ease;
+}
+
+.toggle-switch-db .slider:before {
+    position: absolute;
+    content: "";
+    height: 14px;
+    width: 14px;
+    left: 2px;
+    bottom: 2px;
+    background-color: white;
+    transition: .2s ease;
+    border-radius: 50%;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.toggle-switch-db input:checked+.slider {
+    background-color: var(--accent);
+}
+
+.toggle-switch-db input:checked+.slider:before {
+    transform: translateX(14px);
+}
+
+.toggle-switch-db input:focus+.slider {
+    box-shadow: 0 0 1px var(--accent);
 }
 
 /* ======================================================
@@ -1099,7 +1152,7 @@ button[id$="-btn"] {
 }
 
 .history-card .download-db-btn:hover {
-    color: #10b981; 
+    color: #10b981;
     /* Green on hover */
 }
 
@@ -2655,17 +2708,22 @@ button[id$="-btn"] {
 }
 
 .code-cell.ai-cell-updated {
-    animation: aiCellFlash 1.2s ease;
+    animation: aiCellFlash 2.5s ease-out;
 }
 
 @keyframes aiCellFlash {
     0% {
-        box-shadow: inset 0 0 0 2px #2563eb;
-        background: rgba(37, 99, 235, 0.06);
+        box-shadow: inset 0 0 0 2px #eab308;
+        background: rgba(234, 179, 8, 0.15);
+    }
+
+    20% {
+        box-shadow: inset 0 0 0 2px #eab308;
+        background: rgba(234, 179, 8, 0.25);
     }
 
     100% {
-        box-shadow: none;
+        box-shadow: inset 0 0 0 0 transparent;
         background: transparent;
     }
 }
@@ -3247,6 +3305,6 @@ button[id$="-btn"] {
 
 /* In style.css */
 .cm-new-code-highlight {
-    background-color: rgba(253, 246, 171, 0.4) !important;
-    /* Soft Yellow */
+    background-color: rgba(167, 243, 208, 0.45) !important;
+    /* Soft Colab Green */
 }

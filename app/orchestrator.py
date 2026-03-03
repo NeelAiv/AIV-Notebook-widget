@@ -415,7 +415,8 @@ Identify the PRIMARY intent (choose only ONE): SQL_QUERY, VECTOR_SEARCH, EXPLAIN
         is_modification: bool = False,
         original_code: Optional[str] = None,
         active_cell_id: Optional[str] = None,
-        images: list = None
+        images: list = None,
+        use_db_context: bool = True
     ) -> Dict[str, Any]:
         """
         Handles requests to generate or modify Python code.
@@ -530,20 +531,21 @@ Return the full modified code block now:"""
 
         # 1. Grab Database Schema if connected:
         db_schema_str = ""
-        schema = self.db.get_schema()
-        if schema:
-            # Group by table
-            tables = {}
-            for row_dic in schema:
-                tbl = row_dic['table_name']
-                col = row_dic['column_name']
-                dtype = row_dic['data_type']
-                if tbl not in tables: tables[tbl] = []
-                tables[tbl].append(f"{col} ({dtype})")
-            
-            db_schema_str = "\nDATABASE SCHEMA AVAILABLE VIA `query_db()`:\n"
-            for tbl, cols in tables.items():
-                db_schema_str += f"- Table `{tbl}`: {', '.join(cols)}\n"
+        if use_db_context:
+            schema = self.db.get_schema()
+            if schema:
+                # Group by table
+                tables = {}
+                for row_dic in schema:
+                    tbl = row_dic['table_name']
+                    col = row_dic['column_name']
+                    dtype = row_dic['data_type']
+                    if tbl not in tables: tables[tbl] = []
+                    tables[tbl].append(f"{col} ({dtype})")
+                
+                db_schema_str = "\nDATABASE SCHEMA AVAILABLE VIA `query_db()`:\n"
+                for tbl, cols in tables.items():
+                    db_schema_str += f"- Table `{tbl}`: {', '.join(cols)}\n"
 
         # 2. Grab Uploaded File Header/Context if present:
         file_context_str = ""
@@ -634,7 +636,8 @@ File Content:
         notebook_cells: List[str],
         client_vars: List[str],
         chat_history: List[Dict[str, str]],
-        images: list = None
+        images: list = None,
+        use_db_context: bool = True
     ) -> Dict[str, Any]:
         """Handles general questions using the LLM."""
         tool_used = "General_Question"
@@ -692,7 +695,8 @@ Active Variables: {json.dumps(client_vars) if client_vars else "No active variab
         *,
         is_modification: bool = False,
         original_code: Optional[str] = None,
-        active_cell_id: Optional[str] = None
+        active_cell_id: Optional[str] = None,
+        use_db_context: bool = True
     ) -> Dict[str, Any]:
         """
         Routes the user query to the appropriate handler based on identified intent.
@@ -713,9 +717,9 @@ Active Variables: {json.dumps(client_vars) if client_vars else "No active variab
         elif intent == "GENERATE_CODE":
             return self._handle_generate_code(
                 user_query, notebook_cells, client_vars,
-                is_modification, original_code, active_cell_id, images=images
+                is_modification, original_code, active_cell_id, images=images, use_db_context=use_db_context
             )
         elif intent == "FILE_QA":
             return self._handle_file_qa(user_query)
         else:
-            return self._handle_general_question(user_query, notebook_cells, client_vars, chat_history, images=images)
+            return self._handle_general_question(user_query, notebook_cells, client_vars, chat_history, images=images, use_db_context=use_db_context)

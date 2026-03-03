@@ -8,7 +8,8 @@ import os
 import json
 from io import StringIO
 import datetime
-import nbformat 
+import nbformat
+import base64
 from nbformat.v4 import new_notebook, new_code_cell, new_markdown_cell, new_output
 
 
@@ -47,7 +48,26 @@ async def run_ai_query(req: QueryRequest):
     try:
         # 1. If user attached text/csv files via chat, set them as the active context
         if req.datasets:
-            combined_text = "\n\n".join([f"--- File: {d.get('filename')} ---\n{d.get('content')}" for d in req.datasets])
+            parsed_datasets = []
+            for d in req.datasets:
+                filename = d.get('filename', '')
+                content_raw = d.get('content', '')
+                
+                # Check if frontend sent base64 (DataURL)
+                if content_raw.startswith('data:'):
+                    try:
+                        b64_data = content_raw.split(',', 1)[1]
+                        file_bytes = base64.b64decode(b64_data)
+                        content_text = extract_text_from_file(file_bytes, filename)
+                    except Exception as e:
+                        content_text = f"Error decoding {filename}: {str(e)}"
+                else:
+                    # Fallback for plain text arrays (legacy frontend)
+                    content_text = content_raw
+                    
+                parsed_datasets.append(f"--- File: {filename} ---\n{content_text}")
+                
+            combined_text = "\n\n".join(parsed_datasets)
             orchestrator.set_file_context(combined_text)
 
         # 2. Retrieve images from chat history if current request has none
@@ -68,7 +88,8 @@ async def run_ai_query(req: QueryRequest):
             images=active_images,
             is_modification=req.is_modification,
             original_code=req.original_code,
-            active_cell_id=req.active_cell_id
+            active_cell_id=req.active_cell_id,
+            use_db_context=req.use_db_context
         )
         
         history_manager.add_to_history(
@@ -203,7 +224,10 @@ async def upload_file(file: UploadFile = File(...)):
     """
     Uploads a file, extracts text, and sets it as context for the Orchestrator.
     """
-    ALLOWED_EXTENSIONS = {".txt", ".pdf", ".docx", ".csv", ".py", ".js", ".json", ".ipynb", ".html", ".css", ".md"}
+    ALLOWED_EXTENSIONS = {
+        ".txt", ".pdf", ".docx", ".csv", ".py", ".js", ".json", ".ipynb", 
+        ".html", ".css", ".md", ".xlsx", ".xls", ".png", ".jpg", ".jpeg", ".webp"
+    }
     filename = file.filename
     ext = os.path.splitext(filename)[1].lower()
 
@@ -298,20 +322,9 @@ async def delete_history(item_id: int):
 @app.delete("/api/notebooks/{name}")
 async def delete_notebook(name: str):
     filepath = f'notebooks/{name}.ipynb'
-    json_filepath = f'notebooks/{name}.json'
-    deleted = False
-    
     if os.path.exists(filepath):
         os.remove(filepath)
-        deleted = True
-        
-    if os.path.exists(json_filepath):
-        os.remove(json_filepath)
-        deleted = True
-        
-    if deleted:
         return {"status": "deleted"}
-        
     raise HTTPException(status_code=404, detail="Notebook not found")
 
 @app.post("/api/notebooks/save")
@@ -418,10 +431,7 @@ async def rename_notebook(req: Request):
     new_path = f'notebooks/{new_name}.ipynb'
     
     if not os.path.exists(old_path):
-        old_path = f'notebooks/{old_name}.json'
-        new_path = f'notebooks/{new_name}.json'
-        if not os.path.exists(old_path):
-            raise HTTPException(status_code=404, detail="Notebook not found")
+        raise HTTPException(status_code=404, detail="Notebook not found")
             
     if os.path.exists(new_path):
         raise HTTPException(status_code=409, detail="Notebook with this name already exists")
@@ -482,24 +492,8 @@ async def list_notebooks():
                     "timestamp": dt,
                     "cell_count": cell_count
                 })
-            elif filename.endswith('.json'):
-                # Legacy json fallback
-                path = os.path.join('notebooks', filename)
-                mtime = os.path.getmtime(path)
-                dt = datetime.datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M')
-                try:
-                    with open(path, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                    cell_count = len(data) if isinstance(data, list) else len(data.get("cells", []))
-                    nb_list.append({
-                        "display_name": filename.replace('.json', ''),
-                        "timestamp": dt,
-                        "cell_count": cell_count
-                    })
-                except:
-                    pass
     
-    # Sort and remove duplicates by display_name, prioritizing .ipynb
+    # Sort and remove duplicates by display_name
     unique_nbs = {}
     for nb in sorted(nb_list, key=lambda x: x['timestamp'], reverse=True):
         if nb['display_name'] not in unique_nbs:
@@ -512,26 +506,8 @@ async def list_notebooks():
 async def get_notebook(name: str):
     filepath = f'notebooks/{name}.ipynb'
     if not os.path.exists(filepath):
-        json_filepath = f'notebooks/{name}.json'
-        if os.path.exists(json_filepath):
-            with open(json_filepath, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            if isinstance(data, list):
-                return {"cells": data, "chat_history": []}
-            return data
         return {"error": "Notebook not found"}
     
-@app.get("/api/notebooks/{name}/download")
-async def download_notebook(name: str):
-    filepath = f'notebooks/{name}.ipynb'
-    if not os.path.exists(filepath):
-        json_filepath = f'notebooks/{name}.json'
-        if os.path.exists(json_filepath):
-            return FileResponse(json_filepath, media_type='application/json', filename=f"{name}.json")
-        raise HTTPException(status_code=404, detail="Notebook not found")
-        
-    return FileResponse(filepath, media_type='application/x-ipynb+json', filename=f"{name}.ipynb")
-
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
             nb = nbformat.read(f, as_version=4)
@@ -560,6 +536,14 @@ async def download_notebook(name: str):
         
     except Exception as e:
         return {"error": f"Failed to read notebook: {str(e)}"}
+
+@app.get("/api/notebooks/{name}/download")
+async def download_notebook(name: str):
+    filepath = f'notebooks/{name}.ipynb'
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Notebook not found")
+        
+    return FileResponse(filepath, media_type='application/x-ipynb+json', filename=f"{name}.ipynb")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8090)
