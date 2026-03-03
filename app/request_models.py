@@ -11,6 +11,7 @@ class QueryRequest(BaseModel):
     chat_history: List[Any] = Field(default_factory=list, description="Previous chat messages")
     images: List[str] = Field(default_factory=list) # <--- NEW FIELD
     datasets: List[Any] = Field(default_factory=list) # <--- NEW FIELD FOR TEXT FILES
+    use_db_context: bool = True # <--- NEW FIELD FOR TOGGLE
 
     # --- NEW FIELDS FOR MODIFICATION ---
     is_modification: bool = False

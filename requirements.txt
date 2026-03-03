@@ -18,3 +18,5 @@ openai
 sqlalchemy 
 pymysql
 chromadb
+pandas
+openpyxl
