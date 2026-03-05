@@ -432,6 +432,16 @@ body {
     margin-top: 10px;
 }
 
+.conn-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+    display: block;
+}
+
 /* ======================================================
    DRAWERS CONTAINER
 ====================================================== */
@@ -3305,6 +3315,6 @@ button[id$="-btn"] {
 
 /* In style.css */
 .cm-new-code-highlight {
-    background-color: rgba(167, 243, 208, 0.45) !important;
-    /* Soft Colab Green */
+    background-color: rgba(253, 246, 171, 0.4) !important;
+    /* Soft Yellow */
 }
