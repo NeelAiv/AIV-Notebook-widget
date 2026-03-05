@@ -26,30 +26,53 @@ class DBClient:
         self.provider = conf.get('provider', 'postgresql')
         
         try:
-            user = conf.get('user', '')
-            pw = urllib.parse.quote_plus(conf.get('password', ''))
-            host = conf.get('host', 'localhost')
-            port = conf.get('port', '')
-            db = conf.get('database', '')
+            # NEW: If a direct Connection URL was provided, use it as-is
+            direct_url = conf.get('url', '').strip()
             
-            # Map providers to SQLAlchemy database URLs
-            driver_map = {
-                'postgresql': 'postgresql+psycopg2',
-                'mysql': 'mysql+pymysql',
-                'mssql': 'mssql+pyodbc',
-                'oracle': 'oracle+cx_oracle',
-                'sqlite': 'sqlite'
-            }
-            driver = driver_map.get(self.provider, 'postgresql+psycopg2')
-            
-            if self.provider == 'sqlite':
-                # db could be a simple file path for sqlite
-                uri = f"sqlite:///{db}"
+            if direct_url:
+                uri = direct_url
+                # SQLAlchemy needs SQLAlchemy-style URLs, not JDBC-style.
+                # Convert common jdbc: prefixes automatically.
+                if uri.startswith('jdbc:mysql'):
+                    uri = uri.replace('jdbc:mysql', 'mysql+pymysql', 1)
+                elif uri.startswith('jdbc:postgresql'):
+                    uri = uri.replace('jdbc:postgresql', 'postgresql+psycopg2', 1)
+                elif uri.startswith('jdbc:sqlserver') or uri.startswith('jdbc:mssql'):
+                    uri = 'mssql+pyodbc://' + uri.split('://', 1)[-1]
+                elif uri.startswith('jdbc:oracle'):
+                    uri = uri.replace('jdbc:oracle:thin:@', 'oracle+cx_oracle://', 1)
+                # Inject credentials if URL is bare (no user:pass in it)
+                user = conf.get('user', '')
+                pw = urllib.parse.quote_plus(conf.get('password', ''))
+                if user and '@' not in uri.split('://', 1)[-1].split('/')[0]:
+                    scheme, rest = uri.split('://', 1)
+                    uri = f"{scheme}://{user}:{pw}@{rest}"
             else:
-                port_str = f":{port}" if port else ""
-                uri = f"{driver}://{user}:{pw}@{host}{port_str}/{db}"
+                # FALLBACK: Build from legacy host/port/database fields
+                user = conf.get('user', '')
+                pw = urllib.parse.quote_plus(conf.get('password', ''))
+                host = conf.get('host', 'localhost')
+                port = conf.get('port', '')
+                db = conf.get('database', '')
+                driver_map = {
+                    'postgresql': 'postgresql+psycopg2',
+                    'mysql':      'mysql+pymysql',
+                    'mssql':      'mssql+pyodbc',
+                    'oracle':     'oracle+cx_oracle',
+                    'sqlite':     'sqlite',
+                }
+                driver = driver_map.get(self.provider, 'postgresql+psycopg2')
+                if self.provider == 'sqlite':
+                    uri = f"sqlite:///{db}"
+                else:
+                    port_str = f":{port}" if port else ""
+                    uri = f"{driver}://{user}:{pw}@{host}{port_str}/{db}"
+
+            # Connection timeout
+            wait_time = conf.get('wait_time', 30)
+            connect_args = {"connect_timeout": wait_time}
             
-            self.engine = create_engine(uri, pool_pre_ping=True)
+            self.engine = create_engine(uri, pool_pre_ping=True, connect_args=connect_args)
             
             # Test connection
             with self.engine.connect() as conn:

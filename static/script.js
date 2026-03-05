@@ -1,4 +1,40 @@
-﻿let currentAbortController = null;
+﻿// ======================================================
+// SESSION ISOLATION — Multi-user support
+// ======================================================
+// Generate a unique session ID per browser tab and persist it in sessionStorage.
+// This is sent as 'X-Session-ID' on every API call so the server can route
+// each user to their own isolated Orchestrator instance.
+const SESSION_ID = (() => {
+    const key = 'aiv_session_id';
+    const existing = sessionStorage.getItem(key);
+    if (existing) return existing;
+    const id = (typeof crypto !== 'undefined' && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : 'sess-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    sessionStorage.setItem(key, id);
+    return id;
+})();
+
+// Intercept ALL local fetch() calls and silently add the session header.
+// This means no individual fetch call needs to be changed.
+(function patchFetch() {
+    const _orig = window.fetch.bind(window);
+    window.fetch = function (url, options = {}) {
+        // Only patch same-origin (relative) URLs
+        if (typeof url === 'string' && (url.startsWith('/') || url.startsWith(window.location.origin))) {
+            options = {
+                ...options,
+                headers: {
+                    ...(options.headers || {}),
+                    'X-Session-ID': SESSION_ID
+                }
+            };
+        }
+        return _orig(url, options);
+    };
+})();
+
+let currentAbortController = null;
 let attachedFiles = [];
 let chatHistory = [];
 let messagePairs = []; // Tracks {userBubble, assistantBubble, prompt} for editing
@@ -183,6 +219,59 @@ async function customConfirm(message, isDangerous = false) {
 
 async function customPrompt(message, defaultValue = '', options = {}) {
     return await showCustomDialog('Input Required', message, { type: 'prompt', defaultValue, ...options });
+}
+
+// ======================================================
+// TOAST NOTIFICATION SYSTEM
+// ======================================================
+function showToast(message, type = 'info', duration = 4000) {
+    // Create container if it doesn't exist
+    let container = document.getElementById('toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toast-container';
+        container.style.cssText = [
+            'position:fixed', 'bottom:24px', 'right:24px', 'z-index:99999',
+            'display:flex', 'flex-direction:column', 'gap:10px',
+            'pointer-events:none'
+        ].join(';');
+        document.body.appendChild(container);
+    }
+
+    const colors = {
+        success: { bg: '#10b981', icon: '✅' },
+        error: { bg: '#ef4444', icon: '❌' },
+        warning: { bg: '#f59e0b', icon: '⚠️' },
+        info: { bg: '#3b82f6', icon: 'ℹ️' },
+    };
+    const { bg, icon } = colors[type] || colors.info;
+
+    const toast = document.createElement('div');
+    toast.style.cssText = [
+        `background:${bg}`, 'color:#fff',
+        'padding:12px 18px', 'border-radius:10px',
+        'font-size:0.88rem', 'font-weight:500',
+        'display:flex', 'align-items:center', 'gap:10px',
+        'box-shadow:0 4px 16px rgba(0,0,0,0.25)',
+        'pointer-events:auto', 'min-width:240px', 'max-width:360px',
+        'opacity:0', 'transform:translateX(40px)',
+        'transition:opacity 0.25s ease, transform 0.25s ease'
+    ].join(';');
+    toast.innerHTML = `<span style="font-size:1.1rem">${icon}</span><span>${message}</span>`;
+    container.appendChild(toast);
+
+    // Slide in
+    requestAnimationFrame(() => {
+        toast.style.opacity = '1';
+        toast.style.transform = 'translateX(0)';
+    });
+
+    // Auto dismiss
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateX(40px)';
+        setTimeout(() => toast.remove(), 300);
+    }, duration);
 }
 
 // Generate a default notebook name with timestamp
@@ -2500,35 +2589,33 @@ function switchTab(view) {
 }
 
 async function loadConnections() {
-    // Add cache-busting to prevent browser from using old data
+    const list = document.getElementById('connection-list');
+    if (!list) return;
+
+    // Fetch fresh data
     const resp = await fetch('/api/connections', {
         cache: 'no-store',
-        headers: {
-            'Cache-Control': 'no-cache',
-            'Pragma': 'no-cache'
-        }
+        headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }
     });
     const configs = await resp.json();
-    const list = document.getElementById('connection-list');
-    list.innerHTML = '';
 
-    // The trash icon SVG
     const trash = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`;
 
-    for (const name in configs) {
-        if (name === "detail") continue;
-        const div = document.createElement('div');
-        div.className = `conn-item ${configs[name].active ? 'active' : ''}`;
-
-        // We create the inner HTML with a specific button for deleting
-        div.innerHTML = `
-            <span style="flex:1" onclick="switchConnection('${name}')">${name} ${configs[name].active ? '✓' : ''}</span>
+    // Build new HTML off-screen as a string (avoids multiple repaints)
+    const entries = Object.entries(configs).filter(([k]) => k !== 'detail');
+    const html = entries.map(([name, conf]) => `
+        <div class="conn-item ${conf.active ? 'active' : ''}" style="transition:opacity 0.15s ease;">
+            <span style="flex:1" onclick="switchConnection('${name}')">${name} ${conf.active ? '✓' : ''}</span>
             <button class="delete-db-btn" onclick="deleteDB(event, '${name}')">${trash}</button>
-        `;
-        list.appendChild(div);
-    }
+        </div>
+    `).join('');
 
-    // Auto load tables for the active connection
+    // Single DOM write — no intermediate blank state
+    list.style.opacity = '0';
+    list.innerHTML = html || '<div style="font-size:0.8rem;color:#64748b;padding:6px 0;">No connections yet.</div>';
+    requestAnimationFrame(() => { list.style.transition = 'opacity 0.2s'; list.style.opacity = '1'; });
+
+    // Load tables once, after connections are rendered
     loadTables();
 }
 
@@ -2539,35 +2626,39 @@ async function deleteDB(event, name) {
         return;
     }
 
-    try {
-        console.log('Deleting:', name);
+    // Immediately animate the item out — no waiting for server
+    const connItem = event.target.closest('.conn-item');
+    if (connItem) {
+        connItem.style.transition = 'opacity 0.15s ease, transform 0.15s ease';
+        connItem.style.opacity = '0';
+        connItem.style.transform = 'translateX(12px)';
+    }
 
+    try {
         const resp = await fetch(`/api/connections/${encodeURIComponent(name)}`, {
             method: 'DELETE'
         });
 
         if (!resp.ok) {
             const error = await resp.json();
-            throw new Error(error.detail || 'Delete failed');
+            // Restore item if server rejected
+            if (connItem) { connItem.style.opacity = '1'; connItem.style.transform = ''; }
+            showToast('Failed to delete: ' + (error.detail || 'Unknown error'), 'error');
+            return;
         }
 
         const result = await resp.json();
-        console.log('Delete result:', result);
-
         if (result.status === 'deleted') {
-            // Immediately remove from UI without waiting
-            const connItem = event.target.closest('.conn-item');
-            if (connItem) {
-                connItem.remove();
-            }
-
-            // Then reload to get fresh data
-            setTimeout(() => loadConnections(), 100);
+            // Remove from DOM after animation finishes
+            setTimeout(() => connItem?.remove(), 160);
+            showToast(`"${name}" removed.`, 'info', 2500);
+            // Only reload tables (the connection row is already gone)
+            loadTables();
         }
 
     } catch (error) {
-        console.error('Delete error:', error);
-        await customAlert('Failed to delete: ' + error.message);
+        if (connItem) { connItem.style.opacity = '1'; connItem.style.transform = ''; }
+        showToast('Failed to delete: ' + error.message, 'error');
     }
 }
 
@@ -2576,24 +2667,121 @@ function toggleConnForm() {
     f.style.display = f.style.display === 'none' ? 'flex' : 'none';
 }
 
-async function saveNewConnection() {
-    const providerEl = document.getElementById('db-provider');
-    const data = {
-        name: document.getElementById('db-alias').value,
-        provider: providerEl ? providerEl.value : 'postgresql',
-        host: document.getElementById('db-host').value,
-        port: document.getElementById('db-port').value,
-        database: document.getElementById('db-name').value,
-        user: document.getElementById('db-user').value,
-        password: document.getElementById('db-pass').value
+// ── Helpers for the new connection form ───────────────────────────
+function adjustWaitTime(delta) {
+    const el = document.getElementById('db-wait-time');
+    if (!el) return;
+    const next = Math.min(300, Math.max(5, (parseInt(el.value) || 30) + delta));
+    el.value = next;
+}
+
+function onProviderChange() {
+    const provider = document.getElementById('db-provider')?.value;
+    const hintEl = document.getElementById('db-url-hint');
+    const driverRow = document.getElementById('db-driver-row');
+    const driverInput = document.getElementById('db-driver-class');
+    const hints = {
+        postgresql: 'postgresql://user:password@host:5432/dbname',
+        mysql: 'mysql+pymysql://user:password@host:3306/dbname',
+        mssql: 'mssql+pyodbc://user:password@host:1433/dbname',
+        oracle: 'oracle+cx_oracle://user:password@host:1521/SID',
+        sqlite: 'sqlite:///path/to/database.db',
+        jdbc: 'jdbc:database://host:port/dbname',
     };
-    await fetch('/api/connections', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
-    toggleConnForm(); loadConnections();
+    const drivers = {
+        mysql: 'com.mysql.jdbc.Driver',
+        mssql: 'com.microsoft.sqlserver.jdbc.SQLServerDriver',
+        oracle: 'oracle.jdbc.driver.OracleDriver',
+        postgresql: 'org.postgresql.Driver',
+        jdbc: 'com.your.jdbc.Driver',
+    };
+    if (hintEl) hintEl.textContent = hints[provider] ? `Example: ${hints[provider]}` : '';
+    if (driverInput && drivers[provider]) driverInput.placeholder = drivers[provider];
+    if (driverRow) driverRow.style.display = ['postgresql', 'sqlite'].includes(provider) ? 'none' : 'block';
+}
+
+function onJndiChange() {
+    const cb = document.getElementById('db-is-jndi');
+    const slider = document.getElementById('db-jndi-slider');
+    if (slider) slider.style.background = cb?.checked ? 'var(--accent)' : '#ccc';
+}
+
+// ── Main save function ─────────────────────────────────────────────
+async function saveNewConnection() {
+    const name = document.getElementById('db-alias')?.value.trim();
+    if (!name) { showToast('Please enter a display name.', 'warning'); return; }
+
+    const url = document.getElementById('db-url')?.value.trim();
+    if (!url) { showToast('Please enter a Connection URL.', 'warning'); return; }
+
+    let extraConfig = {};
+    try {
+        const raw = document.getElementById('db-extra-config')?.value.trim() || '{}';
+        extraConfig = JSON.parse(raw);
+    } catch {
+        showToast('Extra Configuration is not valid JSON.', 'error', 5000);
+        return;
+    }
+
+    const data = {
+        name,
+        provider: document.getElementById('db-provider')?.value || 'postgresql',
+        url,
+        user: document.getElementById('db-user')?.value.trim() || '',
+        password: document.getElementById('db-pass')?.value || '',
+        wait_time: parseInt(document.getElementById('db-wait-time')?.value) || 30,
+        is_jndi: document.getElementById('db-is-jndi')?.checked || false,
+        driver_class: document.getElementById('db-driver-class')?.value.trim() || '',
+        extra_config: extraConfig,
+    };
+
+    try {
+        showToast(`Connecting to "${name}"...`, 'info', 6000);
+        const resp = await fetch('/api/connections', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        const result = await resp.json();
+        if (!resp.ok) { showToast(`❌ Failed: ${result.detail || 'Connection error'}`, 'error', 6000); return; }
+        if (result.status === 'saved' || result.active === true) {
+            showToast(`✅ "${name}" connected successfully!`, 'success');
+        } else {
+            showToast(`⚠️ Saved "${name}" but could not activate. Check your Connection URL.`, 'warning', 6000);
+        }
+        toggleConnForm();
+        loadConnections();
+    } catch (e) {
+        showToast(`Connection failed: ${e.message}`, 'error', 6000);
+    }
 }
 
 async function switchConnection(name) {
-    await fetch('/api/connections/activate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
-    loadConnections();
+    try {
+        showToast(`Switching to "${name}"...`, 'info', 3000);
+
+        const resp = await fetch('/api/connections/activate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
+        });
+
+        const result = await resp.json();
+
+        if (!resp.ok) {
+            showToast(`Failed to activate "${name}": ${result.detail || 'Unknown error'}`, 'error', 5000);
+        } else if (result.status === 'activated' || result.active === true) {
+            showToast(`✅ Now using "${name}"`, 'success');
+        } else if (result.error) {
+            showToast(`⚠️ "${name}" selected but connection failed: ${result.error}`, 'warning', 6000);
+        } else {
+            showToast(`Switched to "${name}"`, 'success');
+        }
+
+        loadConnections();
+    } catch (e) {
+        showToast(`Switch failed: ${e.message}`, 'error', 5000);
+    }
 }
 
 async function loadTables() {
@@ -2601,29 +2789,69 @@ async function loadTables() {
     if (!tableList) return;
     tableList.innerHTML = 'Loading tables...';
     try {
-        const resp = await fetch('/api/tables');
-        const data = await resp.json();
-        if (!data.tables || data.tables.length === 0) {
+        // Fetch tables list AND currently indexed RAG sources simultaneously
+        const [tablesResp, ragResp] = await Promise.all([
+            fetch('/api/tables'),
+            fetch('/api/vector_memory')
+        ]);
+        const tablesData = await tablesResp.json();
+        const ragData = await ragResp.json();
+
+        if (!tablesData.tables || tablesData.tables.length === 0) {
             tableList.innerHTML = 'No active connection or tables found.';
             return;
         }
-        tableList.innerHTML = data.tables.map(tbl => `
-            <div style="display:flex; justify-content:space-between; align-items:center; padding: 6px 0; border-bottom: 1px solid var(--border);">
-                <span>${tbl}</span>
-                <button onclick="indexTable('${tbl}', event)" style="padding:4px 8px; font-size:0.75rem; border-radius:4px; background:var(--primary); color:white; border:none; cursor:pointer;">Index</button>
+
+        // Build a Set of already-indexed source names for O(1) lookup
+        const indexedSources = new Set(ragData.sources || []);
+
+        tableList.innerHTML = `
+            <div style="font-size:0.75rem; color:#64748b; margin-bottom:8px; font-style:italic;">
+                Click <strong style="color:#10b981;">🧠 + RAG</strong> to index a table into AI memory.
             </div>
-        `).join('');
+            ${tablesData.tables.map(tbl => {
+            const isIndexed = indexedSources.has(tbl);
+            return `
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px;
+                            margin-bottom:4px; border-radius:6px;
+                            background:${isIndexed ? 'rgba(16,185,129,0.07)' : 'var(--bg-secondary)'};
+                            border:1px solid ${isIndexed ? '#10b981' : 'var(--border)'};">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span style="font-size:0.9rem;">${isIndexed ? '🧠' : '🗂️'}</span>
+                        <div>
+                            <span style="font-size:0.84rem; font-weight:500;">${tbl}</span>
+                            ${isIndexed ? `<div style="font-size:0.7rem; color:#10b981; font-weight:600; margin-top:1px;">✓ Indexed in RAG</div>` : ''}
+                        </div>
+                    </div>
+                    ${isIndexed
+                    ? `<button onclick="indexTable('${tbl}', event)"
+                                style="padding:3px 8px; font-size:0.7rem; font-weight:500; border-radius:4px;
+                                       background:transparent; color:#10b981; border:1px solid #10b981;
+                                       cursor:pointer; white-space:nowrap;">
+                                🔄 Re-index
+                           </button>`
+                    : `<button onclick="indexTable('${tbl}', event)"
+                                style="padding:4px 10px; font-size:0.75rem; font-weight:600; border-radius:4px;
+                                       background:#10b981; color:white; border:none; cursor:pointer;
+                                       display:flex; align-items:center; gap:4px;">
+                                🧠 + RAG
+                           </button>`
+                }
+                </div>`;
+        }).join('')}`;
     } catch (err) {
         tableList.innerHTML = 'Error loading tables.';
     }
 }
 
 async function indexTable(tableName, event) {
-    const btn = event.target;
-    btn.innerText = 'Indexing...';
+    const btn = event.target.closest('button');
+    if (!btn) return;
+    btn.innerHTML = '⏳ Indexing...';
     btn.disabled = true;
     btn.style.opacity = '0.7';
     try {
+        showToast(`⏳ Indexing "${tableName}" into RAG memory...`, 'info', 8000);
         const resp = await fetch('/api/index_table', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -2631,23 +2859,25 @@ async function indexTable(tableName, event) {
         });
         const result = await resp.json();
         if (resp.ok) {
-            btn.innerText = 'Indexed ✓';
-            btn.style.background = '#10b981'; // Green
+            showToast(`✅ "${tableName}" indexed into RAG! You can now ask questions about it.`, 'success', 5000);
+            // Reload both tables and RAG memory so the persistent badge appears immediately
+            await Promise.all([loadTables(), loadVectorMemory()]);
         } else {
             throw new Error(result.message || 'Failed');
         }
     } catch (err) {
-        btn.innerText = 'Error';
-        btn.style.background = '#ef4444'; // Red
-    }
-    setTimeout(() => {
-        btn.innerText = 'Index';
-        btn.disabled = false;
-        btn.style.background = 'var(--primary)';
+        btn.innerHTML = '❌ Error';
+        btn.style.background = '#ef4444';
         btn.style.opacity = '1';
-    }, 5000);
-    // Reload memory to see the newly indexed table
-    setTimeout(() => { loadVectorMemory(); }, 2000);
+        showToast(`❌ Failed to index "${tableName}": ${err.message}`, 'error', 6000);
+        // Reset button after 3s on failure
+        setTimeout(() => {
+            btn.innerHTML = '🧠 + RAG';
+            btn.disabled = false;
+            btn.style.background = '#10b981';
+            btn.style.opacity = '1';
+        }, 3000);
+    }
 }
 
 async function loadVectorMemory() {
@@ -2675,19 +2905,21 @@ async function loadVectorMemory() {
 }
 
 async function deleteVectorMemory(sourceName) {
-    if (!confirm(`Are you sure you want to delete '${sourceName}' from the AI's Vector Memory?`)) return;
+    if (!await customConfirm(`Remove "${sourceName}" from AI Vector Memory?\n\nThis will delete all indexed chunks for this source from ChromaDB.`, true)) return;
     try {
         const resp = await fetch(`/api/vector_memory/${encodeURIComponent(sourceName)}`, {
             method: 'DELETE'
         });
         if (resp.ok) {
-            loadVectorMemory(); // Refresh the list
+            showToast(`🗑️ "${sourceName}" removed from Vector Memory.`, 'info', 3000);
+            // Refresh both the RAG list AND the tables list (so indexed badge clears)
+            await Promise.all([loadVectorMemory(), loadTables()]);
         } else {
             const error = await resp.json();
-            alert('Delete failed: ' + error.detail);
+            showToast('Delete failed: ' + (error.detail || 'Unknown error'), 'error');
         }
     } catch (err) {
-        alert('Failed to delete memory block.');
+        showToast('Failed to delete memory block: ' + err.message, 'error');
     }
 }
 

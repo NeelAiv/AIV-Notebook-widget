@@ -16,11 +16,19 @@ from nbformat.v4 import new_notebook, new_code_cell, new_markdown_cell, new_outp
 # Custom Modules - Ensure these exist in app/db/
 from app.db import config_manager, history_manager
 from app.orchestrator import IncidentOrchestrator
+from app.session_manager import session_manager
 from app.request_models import QueryRequest
-from app.utils.file_parser import extract_text_from_file # Import file parser
+from app.utils.file_parser import extract_text_from_file, is_structured_file, is_unstructured_file, extract_structured_metadata
 
 app = FastAPI(title="InsightEdge AI Notebook")
-orchestrator = IncidentOrchestrator()
+
+# ---------------------------------------------------------------------------
+# Helper: get the per-session orchestrator from the X-Session-ID header
+# Falls back to a shared "default" session if no header is present.
+# ---------------------------------------------------------------------------
+def get_orchestrator(request: Request) -> IncidentOrchestrator:
+    session_id = request.headers.get("X-Session-ID", "default")
+    return session_manager.get_orchestrator(session_id)
 
 # Create notebooks directory if not exists
 if not os.path.exists('notebooks'):
@@ -44,42 +52,70 @@ async def get_index():
 # --- main.py --- (Focus on the /query endpoint)
 
 @app.post("/query")
-async def run_ai_query(req: QueryRequest):
+async def run_ai_query(req: QueryRequest, request: Request):
+    orchestrator = get_orchestrator(request)
     try:
         # 1. If user attached text/csv files via chat, set them as the active context
         if req.datasets:
             parsed_datasets = []
+            last_filename = ''
+            last_file_bytes = None
             for d in req.datasets:
                 filename = d.get('filename', '')
                 content_raw = d.get('content', '')
+                last_filename = filename
                 
                 # Check if frontend sent base64 (DataURL)
                 if content_raw.startswith('data:'):
                     try:
                         b64_data = content_raw.split(',', 1)[1]
                         file_bytes = base64.b64decode(b64_data)
+                        last_file_bytes = file_bytes
                         content_text = extract_text_from_file(file_bytes, filename)
                     except Exception as e:
                         content_text = f"Error decoding {filename}: {str(e)}"
                 else:
-                    # Fallback for plain text arrays (legacy frontend)
                     content_text = content_raw
                     
                 parsed_datasets.append(f"--- File: {filename} ---\n{content_text}")
                 
             combined_text = "\n\n".join(parsed_datasets)
-            orchestrator.set_file_context(combined_text)
+            
+            # Smart context setting based on file type
+            if is_structured_file(last_filename) and last_file_bytes:
+                metadata = extract_structured_metadata(last_file_bytes, last_filename)
+                orchestrator.set_file_context(combined_text, metadata=metadata, file_type='structured', filename=last_filename)
+            elif is_unstructured_file(last_filename):
+                orchestrator.set_file_context(combined_text, file_type='unstructured', filename=last_filename)
+                # Auto-index into RAG for unstructured files
+                from app.db.vector_store import vector_store as vs
+                try:
+                    chunks = [c.strip() for c in combined_text.split('\n') if c.strip()]
+                    embeddings = []
+                    valid_chunks = []
+                    for chunk in chunks[:500]:
+                        try:
+                            vec = orchestrator.embedder.get_embedding(chunk)
+                            valid_chunks.append(chunk)
+                            embeddings.append(vec)
+                        except: pass
+                    if valid_chunks:
+                        vs.add_chunks(last_filename, valid_chunks, embeddings)
+                        print(f"\u2705 Auto-indexed {last_filename} into RAG ({len(valid_chunks)} chunks)")
+                except Exception as e:
+                    print(f"Auto-RAG indexing failed: {e}")
+            else:
+                orchestrator.set_file_context(combined_text, filename=last_filename)
 
         # 2. Retrieve images from chat history if current request has none
         active_images = list(req.images) if req.images else []
         if not active_images and req.chat_history:
-            # Look backwards for most recent images attached in this chat history
             for msg in reversed(req.chat_history):
                 if isinstance(msg, dict) and msg.get("images"):
                     active_images = msg["images"]
                     break
 
-        # Pass all arguments to the Orchestrator
+        # Pass all arguments to the per-session Orchestrator
         result = orchestrator.route_and_execute(
             req.prompt, 
             req.notebook_cells, 
@@ -220,10 +256,11 @@ async def get_db_tables():
     return {"tables": list(tables)}
 
 @app.post("/api/upload_file")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(file: UploadFile = File(...), request: Request = None):
     """
-    Uploads a file, extracts text, and sets it as context for the Orchestrator.
+    Uploads a file, extracts text, and sets it as context for the user's session Orchestrator.
     """
+    orchestrator = get_orchestrator(request)
     ALLOWED_EXTENSIONS = {
         ".txt", ".pdf", ".docx", ".csv", ".py", ".js", ".json", ".ipynb", 
         ".html", ".css", ".md", ".xlsx", ".xls", ".png", ".jpg", ".jpeg", ".webp"
@@ -238,37 +275,80 @@ async def upload_file(file: UploadFile = File(...)):
         content = await file.read()
         extracted_text = extract_text_from_file(content, filename)
         
-        # Set context in Orchestrator
-        orchestrator.set_file_context(extracted_text)
-        
-        return {
-            "status": "success",
-            "filename": filename,
-            "message": "File uploaded and processed successfully. You can now ask questions about it."
-        }
+        # Smart context setting based on file type
+        if is_structured_file(filename):
+            metadata = extract_structured_metadata(content, filename)
+            orchestrator.set_file_context(extracted_text, metadata=metadata, file_type='structured', filename=filename)
+            return {
+                "status": "success",
+                "filename": filename,
+                "message": f"Structured file uploaded. AI will use metadata ({metadata.split(chr(10))[1] if chr(10) in metadata else 'summary'}) instead of full data for smart analysis."
+            }
+        elif is_unstructured_file(filename):
+            orchestrator.set_file_context(extracted_text, file_type='unstructured', filename=filename)
+            # Auto-index into ChromaDB for RAG (shared across all sessions)
+            process_and_index_rag(extracted_text, filename)
+            return {
+                "status": "success",
+                "filename": filename,
+                "message": f"Document uploaded and auto-indexed for semantic search. AI will use RAG to find relevant sections when you ask questions."
+            }
+        else:
+            orchestrator.set_file_context(extracted_text, filename=filename)
+            return {
+                "status": "success",
+                "filename": filename,
+                "message": "File uploaded and processed successfully. You can now ask questions about it."
+            }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process file: {str(e)}")
         
 @app.get("/api/llm/settings")
-async def get_llm_settings():
-    """Returns current LLM configuration"""
-    return orchestrator.llm.config
+async def get_llm_settings(request: Request):
+    """Returns current LLM configuration (reads from the session's orchestrator)"""
+    return get_orchestrator(request).llm.config
 
 @app.post("/api/llm/settings")
 async def save_llm_settings(req: Request):
-    """Saves new LLM configuration"""
+    """Saves new LLM configuration (applies to the calling session's orchestrator)"""
     data = await req.json()
-    orchestrator.llm.update_config(data)
+    get_orchestrator(req).llm.update_config(data)
     return {"status": "success", "message": "LLM Settings updated"}
+
+@app.get("/api/sessions")
+async def get_active_sessions():
+    """Admin endpoint: shows how many sessions are active."""
+    return {
+        "active_sessions": session_manager.active_count,
+        "session_ids": [s[:8] + "..." for s in session_manager.session_ids()]
+    }
 @app.get("/api/connections")
 async def list_conns(): return config_manager.get_all_configs()
 
 @app.post("/api/connections")
 async def add_conn(req: Request):
     data = await req.json()
-    config_manager.save_config(data['name'], data)
+    name = data.get('name', '').strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Connection name is required.")
+
+    # 1. Save config TEMPORARILY to disk so DBClient can read it
+    config_manager.save_config(name, data)
+
+    # 2. Test the connection immediately
     orchestrator.db.refresh_connection()
-    return {"status": "saved"}
+
+    # 3. If it failed (engine is None), remove the bad config and return error
+    if orchestrator.db.engine is None:
+        config_manager.delete_config(name)
+        # Re-activate whatever was previously active (refresh again)
+        orchestrator.db.refresh_connection()
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not connect to '{name}'. Check your Connection URL and credentials."
+        )
+
+    return {"status": "saved", "active": True}
 # --- main.py ---
  
 @app.post("/api/execute_sql")
