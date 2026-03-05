@@ -143,8 +143,9 @@ async def run_ai_query(req: QueryRequest, request: Request):
 
 from app.db.vector_store import vector_store
 
-def process_and_index_rag(text_data: str, source_name: str):
+def process_and_index_rag(text_data: str, source_name: str, session_id: str = "default"):
     """Runs in the background: Chunks text, gets embeddings, saves to ChromaDB"""
+    orchestrator = session_manager.get_orchestrator(session_id)
     chunks = text_data.split('\n')
     valid_chunks = []
     embeddings = []
@@ -161,8 +162,9 @@ def process_and_index_rag(text_data: str, source_name: str):
     vector_store.add_chunks(source_name, valid_chunks, embeddings)
     print(f"✅ Finished indexing {source_name} for RAG into ChromaDB!")
 
-def process_and_index_table(table_name: str):
+def process_and_index_table(table_name: str, session_id: str = "default"):
     """Retrieves all rows from a DB table, embeds them, and saves to ChromaDB."""
+    orchestrator = session_manager.get_orchestrator(session_id)
     print(f"Starting to index table '{table_name}'...")
     db = orchestrator.db
     if not db.engine:
@@ -198,13 +200,15 @@ def process_and_index_table(table_name: str):
 async def trigger_rag_indexing(req: Request, background_tasks: BackgroundTasks):
     data = await req.json()
     source_name = data.get('source_name', 'unknown_file')
+    orchestrator = get_orchestrator(req)
     text_content = orchestrator.active_file_context  # The file they just uploaded
     
     if not text_content:
         return {"status": "error", "message": "No active file context found to index."}
     
     # Send the heavy lifting to the background so the API returns instantly
-    background_tasks.add_task(process_and_index_rag, text_content, source_name)
+    session_id = req.headers.get("X-Session-ID", "default")
+    background_tasks.add_task(process_and_index_rag, text_content, source_name, session_id)
     
     return {"status": "indexing_started", "message": f"Indexing {source_name} in the background..."}
 
@@ -214,8 +218,8 @@ async def trigger_table_indexing(req: Request, background_tasks: BackgroundTasks
     table_name = data.get('table_name')
     if not table_name:
         return {"status": "error", "message": "No table name provided."}
-        
-    background_tasks.add_task(process_and_index_table, table_name)
+    session_id = req.headers.get("X-Session-ID", "default")
+    background_tasks.add_task(process_and_index_table, table_name, session_id)
     return {"status": "indexing_started", "message": f"Indexing table '{table_name}' in the background..."}
 
 @app.get("/api/vector_memory")
@@ -244,9 +248,9 @@ async def delete_vector_memory(source_name: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/tables")
-async def get_db_tables():
+async def get_db_tables(req: Request):
     """Returns the list of tables from the active connection to power the Semantic Search UI."""
-    db = orchestrator.db
+    db = get_orchestrator(req).db
     if not db.engine:
         return {"tables": []}
     schema = db.get_schema()
@@ -287,7 +291,8 @@ async def upload_file(file: UploadFile = File(...), request: Request = None):
         elif is_unstructured_file(filename):
             orchestrator.set_file_context(extracted_text, file_type='unstructured', filename=filename)
             # Auto-index into ChromaDB for RAG (shared across all sessions)
-            process_and_index_rag(extracted_text, filename)
+            session_id = request.headers.get("X-Session-ID", "default") if request else "default"
+            process_and_index_rag(extracted_text, filename, session_id)
             return {
                 "status": "success",
                 "filename": filename,
@@ -335,6 +340,8 @@ async def add_conn(req: Request):
     # 1. Save config TEMPORARILY to disk so DBClient can read it
     config_manager.save_config(name, data)
 
+    orchestrator = get_orchestrator(req)
+    
     # 2. Test the connection immediately
     orchestrator.db.refresh_connection()
 
@@ -371,10 +378,9 @@ async def execute_sql_bridge(req: Request):
 
             return {"status": "error", "message": "No SQL provided"}
  
-        # Use the existing DB client inside the orchestrator
-
+        # Use the existing DB client inside the session's orchestrator
         # This uses whatever connection is currently 'Active' in config_manager
-
+        orchestrator = get_orchestrator(req)
         results = orchestrator.db.execute_query(sql_query)
 
         return {"status": "success", "data": results}
@@ -387,7 +393,7 @@ async def execute_sql_bridge(req: Request):
 async def activate_conn(req: Request):
     data = await req.json()
     config_manager.set_active(data['name'])
-    orchestrator.db.refresh_connection()
+    get_orchestrator(req).db.refresh_connection()
     return {"status": "activated"}
 
 @app.get("/api/history")
