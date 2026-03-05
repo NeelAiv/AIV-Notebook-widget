@@ -8,9 +8,16 @@ class LocalEmbedder:
         # 2. Very small (only 384 dimensions)
         # 3. Fast enough to run on a CPU without lag
         print("📥 Loading Embedding Model (CPU)...")
-        
+        # Disable unauthenticated warning and force local loading to speed up restarts
+        os.environ["HF_HUB_DISABLE"] = "1"
         # device='cpu' is CRITICAL here to save your GPU for the LLM
-        self.model = SentenceTransformer('BAAI/bge-small-en-v1.5', device='cpu')
+        try:
+            self.model = SentenceTransformer('BAAI/bge-small-en-v1.5', device='cpu', local_files_only=True)
+        except Exception:
+            # Fallback to download just in case the cache was cleared
+            os.environ.pop("HF_HUB_DISABLE", None)
+            self.model = SentenceTransformer('BAAI/bge-small-en-v1.5', device='cpu')
+            
         print("✅ Embedding Model Loaded.")
 
     def get_embedding(self, text):
