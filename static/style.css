@@ -1427,24 +1427,51 @@ button[id$="-btn"] {
     color: white;
 }
 
-.delete-db-btn {
+.delete-db-btn,
+.edit-db-btn,
+.refresh-db-btn {
     opacity: 0;
     /* Hidden until hover */
     background: transparent;
     border: none;
-    color: #f87171;
     cursor: pointer;
     display: flex;
     align-items: center;
     padding: 4px;
+    transition: opacity 0.2s ease, color 0.15s ease;
 }
 
-.conn-item:hover .delete-db-btn {
+.delete-db-btn {
+    color: #f87171;
+}
+
+.edit-db-btn {
+    color: var(--text-secondary);
+}
+
+.refresh-db-btn {
+    color: var(--text-secondary);
+}
+
+.conn-item:hover .delete-db-btn,
+.conn-item:hover .edit-db-btn,
+.conn-item:hover .refresh-db-btn {
     opacity: 1;
 }
 
 .delete-db-btn:hover {
     color: #ef4444;
+}
+
+.edit-db-btn:hover,
+.refresh-db-btn:hover {
+    color: var(--accent);
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 /* History/Saved List Layout */
@@ -1470,19 +1497,6 @@ button[id$="-btn"] {
     justify-content: space-between;
     align-items: center;
     position: relative;
-}
-
-.delete-db-btn {
-    opacity: 0;
-    background: transparent;
-    border: none;
-    color: #ef4444;
-    cursor: pointer;
-    transition: opacity 0.2s;
-}
-
-.conn-item:hover .delete-db-btn {
-    opacity: 1;
 }
 
 /* Saved List Styling */

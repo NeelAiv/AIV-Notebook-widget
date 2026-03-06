@@ -45,6 +45,7 @@ let pyodide = null; // Global Pyodide instance
 let showCode = true; // Global toggle: set to false to hide code blocks in AI responses
 let pendingCodeProposal = null; // Pending AI code action for the active code cell
 let lastActiveCellId = null; // Tracks the last cell that was run or focused
+let currentConfigs = {}; // Global store for loaded database configs
 
 // =======================
 // LOADING SCREEN MANAGEMENT
@@ -440,6 +441,7 @@ const ICON_EDIT_MESSAGE = `<svg xmlns="http://www.w3.org/2000/svg" width="24" he
 const ICON_ACCEPT_CHECK = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/></svg>`;
 const ICON_ACCEPT_PLAY = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"/></svg>`;
 const ICON_CANCEL_X = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`;
+const ICON_REFRESH = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-rotate-cw"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>`;
 // --- 1. UTILITIES ---
 function autoResize(textarea) {
     textarea.style.height = 'auto';
@@ -2602,11 +2604,18 @@ async function loadConnections() {
     const trash = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`;
 
     // Build new HTML off-screen as a string (avoids multiple repaints)
+    currentConfigs = configs;
     const entries = Object.entries(configs).filter(([k]) => k !== 'detail');
     const html = entries.map(([name, conf]) => `
         <div class="conn-item ${conf.active ? 'active' : ''}" style="transition:opacity 0.15s ease;">
-            <span style="flex:1" onclick="switchConnection('${name}')">${name} ${conf.active ? '✓' : ''}</span>
-            <button class="delete-db-btn" onclick="deleteDB(event, '${name}')">${trash}</button>
+            <span style="flex:1" onclick="switchConnection('${name.replace(/'/g, "\\'")}')">${name} ${conf.active ? '✓' : ''}</span>
+            <button class="refresh-db-btn" title="Refresh connection" onclick="refreshDB(event, '${name.replace(/'/g, "\\'")}')">
+                ${ICON_REFRESH.replace('width="24"', 'width="16"').replace('height="24"', 'height="16"')}
+            </button>
+            <button class="edit-db-btn" title="Edit details" onclick="openEditConnectionForm(event, '${name.replace(/'/g, "\\'")}')">
+                ${ICON_EDIT.replace('width="24"', 'width="16"').replace('height="24"', 'height="16"')}
+            </button>
+            <button class="delete-db-btn" title="Delete connection" onclick="deleteDB(event, '${name.replace(/'/g, "\\'")}')">${trash}</button>
         </div>
     `).join('');
 
@@ -2662,9 +2671,87 @@ async function deleteDB(event, name) {
     }
 }
 
-function toggleConnForm() {
-    const f = document.getElementById('conn-form');
-    f.style.display = f.style.display === 'none' ? 'flex' : 'none';
+async function refreshDB(event, name) {
+    event.stopPropagation();
+
+    const refreshBtn = event.currentTarget;
+    const svgIcon = refreshBtn.querySelector('svg');
+    if (svgIcon) svgIcon.style.animation = "spin 1s linear infinite";
+
+    try {
+        const resp = await fetch('/api/connections/activate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
+        });
+
+        const result = await resp.json();
+
+        if (!resp.ok) {
+            showToast(`Failed to refresh "${name}": ${result.detail || 'Unknown error'}`, 'error', 5000);
+        } else if (result.status === 'activated' || result.active === true || !result.error) {
+            showToast(`✅ "${name}" connection refreshed`, 'success');
+            loadConnections(); // Reload list to update active state if it was broken
+        } else {
+            showToast(`⚠️ Refresh failed: ${result.error}`, 'warning', 6000);
+        }
+    } catch (error) {
+        showToast(`Failed to refresh: ${error.message}`, 'error');
+    } finally {
+        if (svgIcon) svgIcon.style.animation = "none";
+    }
+}
+
+function openNewConnectionForm() {
+    const formEl = document.getElementById('conn-form');
+    if (formEl.style.display === 'flex' && document.getElementById('save-conn-btn').textContent === "Connect & Save") {
+        closeConnForm();
+        return;
+    }
+
+    document.getElementById('save-conn-btn').textContent = "Connect & Save";
+    document.getElementById('db-alias').value = '';
+    document.getElementById('db-url').value = '';
+    document.getElementById('db-user').value = '';
+    document.getElementById('db-pass').value = '';
+    document.getElementById('db-extra-config').value = '{}';
+    document.getElementById('db-is-jndi').checked = false;
+    document.getElementById('db-driver-class').value = '';
+    document.getElementById('db-wait-time').value = 30;
+    document.getElementById('conn-form').style.display = 'flex';
+}
+
+function openEditConnectionForm(event, name) {
+    if (event) event.stopPropagation();
+
+    const formEl = document.getElementById('conn-form');
+    if (formEl.style.display === 'flex' &&
+        document.getElementById('save-conn-btn').textContent === "Update & Connect" &&
+        document.getElementById('db-alias').value === name) {
+        closeConnForm();
+        return;
+    }
+
+    const conf = currentConfigs[name];
+    if (!conf) return;
+
+    document.getElementById('save-conn-btn').textContent = "Update & Connect";
+    document.getElementById('db-alias').value = name;
+    document.getElementById('db-provider').value = conf.provider || 'postgresql';
+    document.getElementById('db-url').value = conf.url || '';
+    document.getElementById('db-user').value = conf.user || '';
+    document.getElementById('db-pass').value = conf.password || '';
+    document.getElementById('db-extra-config').value = JSON.stringify(conf.extra_config || {}, null, 2);
+    document.getElementById('db-is-jndi').checked = !!conf.is_jndi;
+    document.getElementById('db-driver-class').value = conf.driver_class || '';
+    document.getElementById('db-wait-time').value = conf.wait_time || 30;
+
+    onProviderChange();
+    document.getElementById('conn-form').style.display = 'flex';
+}
+
+function closeConnForm() {
+    document.getElementById('conn-form').style.display = 'none';
 }
 
 // ── Helpers for the new connection form ───────────────────────────
@@ -2701,9 +2788,7 @@ function onProviderChange() {
 }
 
 function onJndiChange() {
-    const cb = document.getElementById('db-is-jndi');
-    const slider = document.getElementById('db-jndi-slider');
-    if (slider) slider.style.background = cb?.checked ? 'var(--accent)' : '#ccc';
+    // Styling handled automatically by the .toggle-switch-db CSS now! No JS slider paint needed.
 }
 
 // ── Main save function ─────────────────────────────────────────────
@@ -2749,7 +2834,7 @@ async function saveNewConnection() {
         } else {
             showToast(`⚠️ Saved "${name}" but could not activate. Check your Connection URL.`, 'warning', 6000);
         }
-        toggleConnForm();
+        closeConnForm();
         loadConnections();
     } catch (e) {
         showToast(`Connection failed: ${e.message}`, 'error', 6000);

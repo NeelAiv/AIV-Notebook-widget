@@ -132,7 +132,8 @@ async def run_ai_query(req: QueryRequest, request: Request):
             req.prompt, 
             result['answer'], 
             result['tool_used'], 
-            str(req.notebook_cells)
+            str(req.notebook_cells),
+            session_id=request.headers.get("X-Session-ID", "default")
         )
         return result
     except Exception as e:
@@ -397,11 +398,12 @@ async def activate_conn(req: Request):
     return {"status": "activated"}
 
 @app.get("/api/history")
-async def get_hist(): return history_manager.get_all_history()
+async def get_hist(req: Request):
+    return history_manager.get_all_history(req.headers.get("X-Session-ID", "default"))
 
 @app.delete("/api/history/{item_id}")
-async def delete_history(item_id: int):
-    history_manager.delete_history_item(item_id)
+async def delete_history(item_id: int, req: Request):
+    history_manager.delete_history_item(item_id, req.headers.get("X-Session-ID", "default"))
     return {"status": "deleted"}
 
 # In main.py
