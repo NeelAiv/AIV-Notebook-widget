@@ -75,10 +75,16 @@ class IncidentOrchestrator:
         self.embedder = embedder_instance
         self.llm = llm_instance
         self.active_file_context = ""
+        self.active_file_metadata = None
+        self.active_file_type = None
+        self.active_filename = None
 
-    def set_file_context(self, text: str):
+    def set_file_context(self, text: str, metadata: dict = None, file_type: str = None, filename: str = None):
         """Sets the context for file-based Q&A."""
         self.active_file_context = text
+        self.active_file_metadata = metadata
+        self.active_file_type = file_type
+        self.active_filename = filename
 
     # =========================================================================
     # LLM HELPERS
@@ -351,7 +357,8 @@ Identify the PRIMARY intent (choose only ONE): SQL_QUERY, VECTOR_SEARCH, EXPLAIN
         query_vec = self.embedder.get_embedding(user_query)
         
         # Search the universal ChromaDB RAG store!
-        retrieved_data = vector_store.search(query_vec, n_results=5)
+        session_id = getattr(self, "session_id", "default")
+        retrieved_data = vector_store.search(query_vec, n_results=5, session_id=session_id)
 
         # Give it to the LLM
         llm_context = json.dumps(retrieved_data, indent=2, default=str)
@@ -623,10 +630,35 @@ Generate the COMPLETE Pyodide-compatible Python code now (raw code only, no mark
             "If the answer is not found in the file, clearly state that."
         )
 
+        # Safely cap the file contents to avoid blowing up the OpenAI 30K/128K token limit 
+        # (roughly 12000 chars should be safely under limit along with history)
+        preview_limit = 12000
+        file_content_preview = self.active_file_context[:preview_limit]
+        if len(self.active_file_context) > preview_limit:
+            file_content_preview += "\n\n... [FILE TRUNCATED FOR LENGTH] ..."
+
+        rag_context = ""
+        # Append metadata if it was a structured file (CSV/JSON/Excel)
+        if self.active_file_type == 'structured' and self.active_file_metadata:
+            meta_str = json.dumps(self.active_file_metadata, indent=2)
+            file_content_preview = f"--- DATABASE/FILE STRUCTURE METADATA ---\n{meta_str}\n\n--- FILE DATA PREVIEW ---\n{file_content_preview}"
+        
+        # If it's an unstructured file (PDF/Docx), do a quick RAG search to pull specific snippets!
+        elif self.active_file_type == 'unstructured':
+            try:
+                session_id = getattr(self, "session_id", "default")
+                query_vec = self.embedder.get_embedding(user_query)
+                from app.db.vector_store import vector_store
+                retrieved_data = vector_store.search(query_vec, n_results=4, session_id=session_id)
+                if retrieved_data and len(retrieved_data) > 0:
+                    rag_context = f"\n\n--- RAG SEARCH HIGHLIGHTS (Specific Excerpts) ---\n{json.dumps(retrieved_data, indent=2, default=str)}"
+            except Exception as e:
+                print(f"FILE_QA RAG Supplemental fetch error: {e}")
+
         user_msg = f"""User Question: {user_query}
 
-File Content:
-{self.active_file_context}
+File Content/Preview (Top lines):
+{file_content_preview}{rag_context}
 """
         return self._get_llm_response(system_msg, user_msg, tool_used)
 

@@ -61,8 +61,10 @@ class SessionManager:
                     print(f"♻️  Session evicted (pool full): {oldest[:8]}…")
 
                 OrchestratorClass = _get_orchestrator_class()
+                orch = OrchestratorClass()
+                orch.session_id = session_id
                 self._sessions[session_id] = {
-                    "orchestrator": OrchestratorClass(),
+                    "orchestrator": orch,
                     "created": time.time(),
                     "last_active": time.time(),
                 }
