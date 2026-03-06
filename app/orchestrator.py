@@ -238,7 +238,7 @@ class IncidentOrchestrator:
     # INTENT ROUTING
     # =========================================================================
 
-    def _identify_intent(self, user_query: str, notebook_cells: List[str], client_vars: List[str], chat_history: List[Dict[str, str]]) -> str:
+    def _identify_intent(self, user_query: str, notebook_cells: List[str], client_vars: List[str], chat_history: List[Dict[str, str]], use_db_context: bool = True) -> str:
         """
         FAST ROUTING: Uses keywords/regex first, falls back to LLM only if necessary.
         """
@@ -260,7 +260,7 @@ class IncidentOrchestrator:
             return "EXPLAIN_CODE"
 
         # --- 3. SQL (Instant) ---
-        if any(x in q for x in ["select ", "from ", "count(", "database", "sql", "table", "query data"]):
+        if use_db_context and any(x in q for x in ["select ", "from ", "count(", "database", "sql", "table", "query data"]):
             print("⚡ FAST MATCH: Intent identified as SQL_QUERY via keywords")
             return "SQL_QUERY"
 
@@ -299,13 +299,30 @@ class IncidentOrchestrator:
         notebook_context_str = "\n".join([f"Cell {i+1}:\n```python\n{cell}\n```" for i, cell in enumerate(notebook_cells)])
         history_str = self._format_history(chat_history)
 
+        # Give the router context on what resources are actually available
+        db_schema = self.db.get_schema() if (getattr(self, "db", None) and use_db_context) else None
+        db_tables_list = list(set([row['table_name'] for row in db_schema])) if db_schema else []
+        db_connected = True if db_schema else False
+        
+        active_file = True if self.active_file_context else False
+        file_name_context = getattr(self, "active_filename", "Unknown File") if active_file else "None"
+
         user_msg = f"""User Query: {user_query}
 Previous Chat History: {history_str}
 Notebook Code: {notebook_context_str if notebook_cells else "None"}
+
+SYSTEM STATE:
+- Active File Uploaded: {active_file} | File Name: {file_name_context}
+- SQL Database Connected: {db_connected} | Tables: {", ".join(db_tables_list) if db_tables_list else "None"}
+
+CRITICAL RULES:
+- If the user's query refers to data found in the "File Name", YOU MUST CHOOSE FILE_QA or GENERATE_CODE (Choose GENERATE_CODE if it requires calculations/pandas, choose FILE_QA if reading/summarizing).
+- ONLY choose SQL_QUERY if the user's query specifically targets the SQL "Tables" listed above! Do NOT guess SQL_QUERY for random topics.
+
 Identify the PRIMARY intent (choose only ONE): SQL_QUERY, VECTOR_SEARCH, EXPLAIN_CODE, GENERATE_CODE, FILE_QA, GENERAL_QUESTION"""
 
         intent_response = self.llm.generate(system_msg, user_msg)
-        intent = intent_response.strip().upper().replace(" ", "_")
+        intent = intent_response.strip().upper().replace(" ", "_").replace(":", "").replace("-", "").split("\n")[0]
 
         valid_intents = ["SQL_QUERY", "VECTOR_SEARCH", "EXPLAIN_CODE", "GENERATE_CODE", "FILE_QA", "GENERAL_QUESTION"]
         if intent in valid_intents:
@@ -317,30 +334,63 @@ Identify the PRIMARY intent (choose only ONE): SQL_QUERY, VECTOR_SEARCH, EXPLAIN
     # =========================================================================
 
     def _handle_sql_query(self, user_query: str) -> Dict[str, Any]:
-        """Handles SQL query intent."""
+        """Handles SQL query intent dynamically based on connected database schema."""
         tool_used = "SQL"
-        base_sql = 'SELECT incident_id, project, priority, status, threat_category FROM "cyber_secuitry"'
-        sql = ""
+        
+        # 1. Ensure Database is actually connected and get schema
+        schema = self.db.get_schema()
+        if not schema:
+            return self._get_llm_response(
+                "You are a helpful AI assistant.",
+                "There is no active SQL database connection to query. Please add a database connection first from the Data Sources tab.",
+                tool_used="SQL_Error"
+            )
 
-        query_lower = user_query.lower()
-        if "critical" in query_lower:
-            sql = f"{base_sql} WHERE priority = 'Critical';"
-        elif "open" in query_lower:
-            sql = f"{base_sql} WHERE status = 'Open';"
-        elif "how many incidents" in query_lower or "count incidents" in query_lower:
-            sql = 'SELECT COUNT(incident_id) FROM "cyber_secuitry";'
-        elif "list all incidents" in query_lower:
-            sql = f"{base_sql} LIMIT 20;"
-        elif "highest priority" in query_lower:
-            sql = f"{base_sql} ORDER BY CASE priority WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 WHEN 'Medium' THEN 3 WHEN 'Low' THEN 4 ELSE 5 END LIMIT 5;"
-        else:
-            sql = f"{base_sql} LIMIT 10;"
+        # 2. Format schema for LLM
+        tables = {}
+        for row_dic in schema:
+            tbl = row_dic['table_name']
+            col = row_dic['column_name']
+            dtype = row_dic['data_type']
+            if tbl not in tables: tables[tbl] = []
+            tables[tbl].append(f"{col} ({dtype})")
+        
+        db_schema_str = "DATABASE SCHEMA AVAILABLE:\n"
+        for tbl, cols in tables.items():
+            db_schema_str += f"- Table `{tbl}`: {', '.join(cols)}\n"
+            
+        # 3. Use LLM to generate precisely structured SQL
+        sql_system_msg = (
+            "You are an expert SQL Developer. Generate ONLY a valid, safe SQL query to answer the user's question, "
+            "based STRICTLY on the provided database schema. "
+            "Respond ONLY with the raw SQL syntax. Do not wrap it in markdown. Do not include explanation."
+        )
+        sql_user_msg = f"{db_schema_str}\n\nUser Question: {user_query}\n\nSQL Query:"
+        
+        sql_query_raw = self.llm.generate(sql_system_msg, sql_user_msg)
+        
+        # Cleanup any sneaky markdown the LLM might have still added
+        sql = re.sub(r'```sql\n?', '', sql_query_raw)
+        sql = sql.replace("```", "").strip()
 
-        retrieved_data = self.db.execute_query(sql)
+        # 4. Execute the dynamically built database query
+        try:
+            retrieved_data = self.db.execute_query(sql)
+            if not retrieved_data or len(retrieved_data) == 0:
+                retrieved_data = [{"Message": "Query successfully executed but returned 0 rows."}]
+        except Exception as e:
+            retrieved_data = [{"SQL_Execution_Error": str(e)}]
+        
+        # 5. Bring results back and summarize for user
         llm_context = json.dumps(retrieved_data, indent=2, default=str)
-        system_msg = "You are a Security Analyst AI. Summarize the provided incident data concisely. Use Markdown tables if listing data. Use bold text for key metrics."
-        user_msg = f"Summarize the following incident data:\n\n{llm_context}\n\nUser's original query: {user_query}"
-        answer = self.llm.generate(system_msg, user_msg)
+        # Prevent token limit explosion if query returns a million rows
+        if len(llm_context) > 12000:
+            llm_context = llm_context[:12000] + "\n\n... [RESULTS TOO LARGE, TRUNCATED] ..."
+
+        summary_system_msg = "You are a Data Analyst AI. Answer the user's question clearly based ONLY on the provided SQL query results. If there is an error, just explain the error gracefully."
+        summary_user_msg = f"User's original query: {user_query}\n\nSQL query executed: {sql}\n\nSQL Results:\n{llm_context}\n\nPlease summarize these results."
+        
+        answer = self.llm.generate(summary_system_msg, summary_user_msg)
 
         return {
             "answer": answer,
@@ -579,6 +629,7 @@ Active Variables already in scope: {json.dumps(client_vars) if client_vars else 
 Generate the COMPLETE Pyodide-compatible Python code now (raw code only, no markdown):
 """
 
+
         generated_code_raw = self.llm.generate(system_msg, user_msg, images=images)
 
         # Extract code from markdown fences if LLM ignores instructions
@@ -736,7 +787,7 @@ Active Variables: {json.dumps(client_vars) if client_vars else "No active variab
         if is_modification:
             intent = "GENERATE_CODE"
         else:
-            intent = self._identify_intent(user_query, notebook_cells, client_vars, chat_history)
+            intent = self._identify_intent(user_query, notebook_cells, client_vars, chat_history, use_db_context=use_db_context)
 
         print(f"🎯 ORCHESTRATOR: Routing to intent → {intent}")
 
