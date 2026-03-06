@@ -629,6 +629,7 @@ Active Variables already in scope: {json.dumps(client_vars) if client_vars else 
 Generate the COMPLETE Pyodide-compatible Python code now (raw code only, no markdown):
 """
 
+
         generated_code_raw = self.llm.generate(system_msg, user_msg, images=images)
 
         # Extract code from markdown fences if LLM ignores instructions
