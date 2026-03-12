@@ -2790,11 +2790,11 @@ async function loadConnections() {
     const inferredProviders = entries.map(([name, conf]) => inferProvider(conf, name)).filter(Boolean);
     const defaultProvider = inferredProviders[0] || '';
     const html = entries.map(([name, conf]) => `
-        <div class="conn-item table-card conn-card ${conf.active ? 'active indexed' : ''}" style="transition:opacity 0.15s ease;">
+        <div class="conn-item table-card conn-card ${conf.active ? 'active indexed' : ''}" style="transition:opacity 0.15s ease;" onclick="switchConnection('${name.replace(/'/g, "\\'")}')">
             <div class="table-card-main">
                 <div class="table-card-icon">${providerInitials[inferProvider(conf, name) || defaultProvider] || 'DB'}</div>
                 <div class="table-card-meta">
-                    <span class="conn-item-label table-card-name" onclick="switchConnection('${name.replace(/'/g, "\\'")}')">${name}</span>
+                    <span class="conn-item-label table-card-name">${name}</span>
                     <div class="table-card-status ${conf.active ? 'indexed' : ''}">
                         ${conf.active ? 'Active connection' : 'Available connection'}
                     </div>
