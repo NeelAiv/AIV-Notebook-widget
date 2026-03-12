@@ -2699,6 +2699,7 @@ function closeDrawer(drawerName) {
 function switchTab(view) {
     const workspaceView = document.getElementById("workspace-view");
     const connectionsView = document.getElementById("connections-view");
+    const content = document.querySelector(".content");
 
     // NEW: your floating AI widget wrapper
     const aiWidget = document.getElementById("ai-widget");
@@ -2714,7 +2715,17 @@ function switchTab(view) {
 
     // Default: hide AI on non-workspace screens
     if (aiWidget) aiWidget.style.display = "none";
-    if (aiMini) aiMini.classList.remove("open");
+    if (aiMini) {
+        aiMini.classList.remove("open");
+        aiMini.classList.remove("docked");
+        aiMini.setAttribute("aria-hidden", "true");
+    }
+    // Release any right-side layout reservation from a previously docked AI panel.
+    if (content) {
+        content.classList.remove("ai-docked");
+        content.style.setProperty("--ai-panel-width", "");
+        content.style.marginRight = "";
+    }
 
     switch (view) {
         case "connections":
