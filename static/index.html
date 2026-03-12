@@ -79,6 +79,22 @@
                     New Notebook
                 </button>
 
+                <button class="notebook-btn"
+                    onclick="document.getElementById('upload-notebook-input').click()"
+                    style="display: inline-flex; align-items: center; gap: 6px; background: transparent; border: none; cursor: pointer;">
+
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="17 8 12 3 7 8" />
+                        <line x1="12" y1="3" x2="12" y2="15" />
+                    </svg>
+
+                    Upload
+                </button>
+                <input type="file" id="upload-notebook-input" accept=".ipynb" style="display:none"
+                    onchange="uploadSavedNotebook(event)">
+
                 <button class="notebook-btn" onclick="addCodeCell()"
                     style="display: inline-flex; align-items: center; gap: 6px; background: transparent; border: none; cursor: pointer;">
 
@@ -202,30 +218,14 @@
             <div id="drawer-saved" class="drawer">
                 <div class="drawer-header">
                     <h3>Saved Notebooks</h3>
-                    <div style="display: flex; gap: 8px; align-items: center;">
-                        <button class="notebook-btn"
-                            style="padding: 4px 8px; font-size: 0.75rem; background: var(--bg-surface); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; display: flex; align-items: center; gap: 4px;"
-                            onclick="document.getElementById('upload-notebook-input').click()">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
-                                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                                stroke-linejoin="round">
-                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                                <polyline points="17 8 12 3 7 8" />
-                                <line x1="12" y1="3" x2="12" y2="15" />
-                            </svg>
-                            Upload .ipynb
-                        </button>
-                        <input type="file" id="upload-notebook-input" accept=".ipynb" style="display:none"
-                            onchange="uploadSavedNotebook(event)">
-                        <button class="drawer-close" onclick="closeDrawer('saved')" aria-label="Close drawer">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
-                                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                                stroke-linejoin="round">
-                                <path d="M18 6l-12 12" />
-                                <path d="M6 6l12 12" />
-                            </svg>
-                        </button>
-                    </div>
+                    <button class="drawer-close" onclick="closeDrawer('saved')" aria-label="Close drawer">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
+                            fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                            stroke-linejoin="round">
+                            <path d="M18 6l-12 12" />
+                            <path d="M6 6l12 12" />
+                        </svg>
+                    </button>
                 </div>
                 <div class="drawer-content">
                     <div id="saved-list" class="history-list"></div>
@@ -335,27 +335,25 @@
 
         <main class="content">
             <div id="workspace-view" class="cell-container"></div>
-            <div id="connections-view" class="cell-container"
-                style="display:none; padding: 24px; max-width: 1100px; margin-left: 20px;">
-                <h2 style="margin-bottom: 20px; color: var(--text-primary);">Database Connections
+            <div id="connections-view" class="cell-container connections-screen" style="display:none;">
+                <h2 class="connections-title">Database Connections
                 </h2>
-                <div>
-                    <div id="connection-list"></div>
-                    <button class="add-conn-btn" onclick="openNewConnectionForm()"
-                        style="margin-top:20px; width:100%; padding:10px; font-weight:500;">+ Add New
+                <div class="connections-panel">
+                    <div id="connection-list" class="connection-list"></div>
+                    <button class="add-conn-btn ui-btn ui-btn-ghost" onclick="openNewConnectionForm()">+ Add New
                         Connection</button>
 
                     <div id="conn-form"
-                        style="display:none; margin-top: 24px; padding: 16px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-sm);"
-                        class="conn-form">
-                        <div
+                        style="display:none; margin-top: 18px; padding: 16px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-sm);"
+                        class="conn-form connections-form">
+                        <div class="conn-form-title"
                             style="font-weight:600; font-size:0.9rem; margin-bottom:12px; color:var(--text-primary); padding-bottom:8px; border-bottom:1px solid var(--border);">
                             New Datasource
                         </div>
 
                         <!-- Datasource Type -->
                         <label class="conn-label">Datasource Type</label>
-                        <select id="db-provider" onchange="onProviderChange()"
+                        <select id="db-provider" class="conn-input" onchange="onProviderChange()"
                             style="margin-bottom:10px; padding:8px; border-radius:var(--radius-sm); border:1px solid var(--border); width:100%; background:var(--bg-secondary); color:var(--text-primary);">
                             <option value="postgresql">PostgreSQL</option>
                             <option value="mysql">MySQL</option>
@@ -367,27 +365,27 @@
 
                         <!-- Display Name -->
                         <label class="conn-label">Display Name</label>
-                        <input id="db-alias" placeholder="e.g. My Production DB" style="margin-bottom:10px;">
+                        <input id="db-alias" class="conn-input" placeholder="e.g. My Production DB" style="margin-bottom:10px;">
 
                         <!-- Connection URL -->
                         <label class="conn-label">Connection URL</label>
-                        <input id="db-url" placeholder="e.g. jdbc:mysql://localhost:3306/mydb"
+                        <input id="db-url" class="conn-input" placeholder="e.g. jdbc:mysql://localhost:3306/mydb"
                             style="margin-bottom:4px;">
-                        <div id="db-url-hint"
+                        <div id="db-url-hint" class="conn-helper-text"
                             style="font-size:0.72rem; color:var(--text-secondary); margin-bottom:10px;"></div>
 
                         <!-- Username -->
                         <label class="conn-label">Username</label>
-                        <input id="db-user" placeholder="Username" style="margin-bottom:10px;">
+                        <input id="db-user" class="conn-input" placeholder="Username" style="margin-bottom:10px;">
 
                         <!-- Password -->
                         <label class="conn-label">Password</label>
-                        <input id="db-pass" type="password" placeholder="Password" style="margin-bottom:10px;">
+                        <input id="db-pass" class="conn-input" type="password" placeholder="Password" style="margin-bottom:10px;">
 
                         <!-- Extra Configuration -->
                         <label class="conn-label">Extra Configuration <span
                                 style="font-weight:400; opacity:0.6;">(JSON)</span></label>
-                        <textarea id="db-extra-config" rows="3" placeholder="{}"
+                        <textarea id="db-extra-config" class="conn-input conn-textarea" rows="3" placeholder="{}"
                             style="margin-bottom:10px; padding:8px; border-radius:var(--radius-sm); border:1px solid var(--border); width:100%; font-family:monospace; font-size:0.8rem; resize:vertical; background:var(--bg-secondary); color:var(--text-primary); box-sizing:border-box;">{}</textarea>
 
                         <!-- Wait Time -->
@@ -414,35 +412,35 @@
                         </div>
 
                         <!-- JDBC Driver Class (shown for jdbc/mysql/etc) -->
-                        <div id="db-driver-row" style="margin-bottom:10px;">
+                        <div id="db-driver-row" class="conn-driver-row" style="margin-bottom:10px;">
                             <label class="conn-label">Driver Class</label>
-                            <input id="db-driver-class" placeholder="e.g. com.mysql.jdbc.Driver"
+                            <input id="db-driver-class" class="conn-input" placeholder="e.g. com.mysql.jdbc.Driver"
                                 style="margin-bottom:4px;">
-                            <div style="font-size:0.72rem; color:var(--text-secondary);">Required for JDBC connections
+                            <div class="conn-helper-text" style="font-size:0.72rem; color:var(--text-secondary);">Required for JDBC connections
                             </div>
                         </div>
 
                         <!-- Actions -->
-                        <div style="display:flex; gap:8px; margin-top:4px;">
-                            <button id="save-conn-btn" onclick="saveNewConnection()"
+                        <div class="conn-form-actions" style="display:flex; gap:8px; margin-top:4px;">
+                            <button id="save-conn-btn" class="conn-btn conn-btn-primary" onclick="saveNewConnection()"
                                 style="flex:1; background:var(--accent); color:white; border:none; padding:10px; border-radius:var(--radius-sm); cursor:pointer; font-weight:600; font-size:0.88rem;">Connect
                                 & Save</button>
-                            <button onclick="closeConnForm()"
+                            <button class="conn-btn conn-btn-secondary" onclick="closeConnForm()"
                                 style="padding:10px 14px; background:var(--bg-secondary); border:1px solid var(--border); border-radius:var(--radius-sm); cursor:pointer; color:var(--text-primary); font-size:0.88rem;">Cancel</button>
                         </div>
                     </div>
                 </div>
 
-                <h2 style="margin-top: 16px; margin-bottom: 8px; color: #1e293b;">Active Database Tables</h2>
-                <div class="sidebar-section">
-                    <div id="tables-list" style="font-size: 0.85rem; color: var(--text-secondary);">
+                <h2 class="connections-subtitle">Active Database Tables</h2>
+                <div class="connections-panel tables-panel">
+                    <div id="tables-list" class="tables-list">
                         No active connection or tables found.
                     </div>
                 </div>
 
-                <h2 style="margin-top: 16px; margin-bottom: 8px; color: #1e293b;">AI Vector Memory (RAG)</h2>
-                <div class="sidebar-section">
-                    <div id="vector-memory-list" style="font-size: 0.85rem; color: var(--text-secondary);">
+                <h2 class="connections-subtitle">AI Vector Memory (RAG)</h2>
+                <div class="connections-panel vector-memory-panel">
+                    <div id="vector-memory-list" class="vector-memory-list">
                         Loading vector memory...
                     </div>
                 </div>
@@ -508,8 +506,8 @@
             <div id="ai-suggestion-chips" class="ai-suggestion-chips"></div>
 
             <div class="ai-input-bar">
-                <div id="ai-file-chips" class="ai-file-chips"></div>
                 <div class="ai-input-container">
+                    <div id="ai-file-chips" class="ai-file-chips" aria-live="polite"></div>
                     <textarea id="prompt-input" class="ai-mini-input" placeholder="Ask AI anything..."
                         rows="1"></textarea>
 
@@ -529,11 +527,9 @@
                             </button>
                         </div>
 
-                        <div class="ai-toolbar-right" style="display: flex; align-items: center; gap: 8px;">
+                        <div class="ai-toolbar-right">
                             <label class="toggle-switch-db" title="Include Database Schema in AI Context">
-                                <span class="db-toggle-label"
-                                    style="font-size:0.75rem; color:var(--text-secondary); font-family:var(--font-primary); white-space:nowrap;">Use
-                                    DB Context</span>
+                                <span class="db-toggle-label">Use DB Context</span>
                                 <input type="checkbox" id="ai-use-db-toggle">
                                 <span class="slider round"></span>
                             </label>

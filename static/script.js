@@ -225,6 +225,44 @@ async function customPrompt(message, defaultValue = '', options = {}) {
 // ======================================================
 // TOAST NOTIFICATION SYSTEM
 // ======================================================
+let activeRagIndexToast = null;
+const inflightTableActions = new Set();
+const inflightMemoryActions = new Set();
+
+function dismissToast(toast) {
+    if (!toast || !toast.parentElement) return;
+    if (toast._dismissTimer) clearTimeout(toast._dismissTimer);
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateX(40px)';
+    setTimeout(() => toast.remove(), 300);
+}
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function fetchTablesAndMemoryState() {
+    const [tablesResp, memoryResp] = await Promise.all([
+        fetch('/api/tables'),
+        fetch('/api/vector_memory')
+    ]);
+    const tablesData = await tablesResp.json();
+    const memoryData = await memoryResp.json();
+    return {
+        tables: Array.isArray(tablesData.tables) ? tablesData.tables : [],
+        sources: Array.isArray(memoryData.sources) ? memoryData.sources : []
+    };
+}
+
+async function pollUntilActionComplete(checkDone, { intervalMs = 2500 } = {}) {
+    while (true) {
+        const state = await fetchTablesAndMemoryState();
+        await Promise.all([loadTables({ preserve: true }), loadVectorMemory({ preserve: true })]);
+        if (checkDone(state)) return state;
+        await sleep(intervalMs);
+    }
+}
+
 function showToast(message, type = 'info', duration = 4000) {
     // Create container if it doesn't exist
     let container = document.getElementById('toast-container');
@@ -232,33 +270,45 @@ function showToast(message, type = 'info', duration = 4000) {
         container = document.createElement('div');
         container.id = 'toast-container';
         container.style.cssText = [
-            'position:fixed', 'bottom:24px', 'right:24px', 'z-index:99999',
+            'position:fixed', 'top:84px', 'right:24px', 'z-index:99999',
             'display:flex', 'flex-direction:column', 'gap:10px',
             'pointer-events:none'
         ].join(';');
         document.body.appendChild(container);
     }
 
-    const colors = {
-        success: { bg: '#10b981', icon: '✅' },
-        error: { bg: '#ef4444', icon: '❌' },
-        warning: { bg: '#f59e0b', icon: '⚠️' },
-        info: { bg: '#3b82f6', icon: 'ℹ️' },
+    const tones = {
+        success: { accent: '#059669', border: '#d1fae5' },
+        error: { accent: '#dc2626', border: '#fee2e2' },
+        warning: { accent: '#d97706', border: '#fef3c7' },
+        info: { accent: '#2563eb', border: '#dbeafe' },
     };
-    const { bg, icon } = colors[type] || colors.info;
+    const { accent, border } = tones[type] || tones.info;
 
     const toast = document.createElement('div');
     toast.style.cssText = [
-        `background:${bg}`, 'color:#fff',
-        'padding:12px 18px', 'border-radius:10px',
-        'font-size:0.88rem', 'font-weight:500',
+        'background:#ffffff', 'color:#0f172a',
+        'padding:11px 14px', 'border-radius:12px',
+        'font-size:0.84rem', 'font-weight:500', 'line-height:1.4',
         'display:flex', 'align-items:center', 'gap:10px',
-        'box-shadow:0 4px 16px rgba(0,0,0,0.25)',
-        'pointer-events:auto', 'min-width:240px', 'max-width:360px',
+        'box-shadow:0 14px 36px rgba(15,23,42,0.12)',
+        `border:1px solid ${border}`, `border-left:3px solid ${accent}`,
+        'pointer-events:auto', 'min-width:260px', 'max-width:360px',
         'opacity:0', 'transform:translateX(40px)',
-        'transition:opacity 0.25s ease, transform 0.25s ease'
+        'transition:opacity 0.24s ease, transform 0.24s ease'
     ].join(';');
-    toast.innerHTML = `<span style="font-size:1.1rem">${icon}</span><span>${message}</span>`;
+
+    const dot = document.createElement('span');
+    dot.style.cssText = [
+        `background:${accent}`,
+        'width:8px', 'height:8px', 'border-radius:50%', 'flex-shrink:0'
+    ].join(';');
+
+    const text = document.createElement('span');
+    text.textContent = message;
+
+    toast.appendChild(dot);
+    toast.appendChild(text);
     container.appendChild(toast);
 
     // Slide in
@@ -268,11 +318,11 @@ function showToast(message, type = 'info', duration = 4000) {
     });
 
     // Auto dismiss
-    setTimeout(() => {
-        toast.style.opacity = '0';
-        toast.style.transform = 'translateX(40px)';
-        setTimeout(() => toast.remove(), 300);
-    }, duration);
+    if (duration > 0) {
+        toast._dismissTimer = setTimeout(() => dismissToast(toast), duration);
+    }
+
+    return toast;
 }
 
 // Generate a default notebook name with timestamp
@@ -1883,6 +1933,19 @@ async function runAIQuery() {
 
     const prompt = input.value.trim();
     if (!prompt && attachedFiles.length === 0) return;
+    const filesToSend = attachedFiles.slice();
+
+    const clearComposerAttachments = () => {
+        attachedFiles = [];
+        const chipsEl = document.getElementById('ai-file-chips');
+        if (chipsEl) {
+            chipsEl.querySelectorAll('[data-object-url]').forEach((el) => {
+                const url = el.getAttribute('data-object-url');
+                if (url) URL.revokeObjectURL(url);
+            });
+            chipsEl.innerHTML = '';
+        }
+    };
 
     // Safety: initialize a default chat if user sends before one exists.
     if (!currentChatId && chats.length === 0 && typeof createNewChat === 'function') {
@@ -1921,9 +1984,11 @@ async function runAIQuery() {
     // --- NEW: Convert Image Files and Data Files ---
     let base64Images = [];
     let uploadedTextFiles = []; // e.g. for CSV/JSON/TXT datasets
+    let messageAttachments = [];
 
     // Process attached files before sending
-    for (let file of attachedFiles) {
+    for (let file of filesToSend) {
+        const ext = file.name.includes(".") ? file.name.split(".").pop().toUpperCase() : "FILE";
         if (file.type && file.type.startsWith('image/')) {
             const base64 = await new Promise((resolve) => {
                 const reader = new FileReader();
@@ -1931,6 +1996,7 @@ async function runAIQuery() {
                 reader.readAsDataURL(file); // Generates data:image/png;base64,...
             });
             base64Images.push(base64);
+            messageAttachments.push({ kind: "image", name: file.name, typeLabel: "Image", previewSrc: base64 });
         } else {
             // Read all files as base64 to support binary formats like pdf, docx, xlsx
             const base64Content = await new Promise((resolve) => {
@@ -1939,6 +2005,7 @@ async function runAIQuery() {
                 reader.readAsDataURL(file);
             });
             uploadedTextFiles.push({ filename: file.name, content: base64Content });
+            messageAttachments.push({ kind: "file", name: file.name, typeLabel: ext });
         }
     }
 
@@ -1960,23 +2027,55 @@ async function runAIQuery() {
     userBubble.style.whiteSpace = 'pre-wrap';
     userBubble.style.overflowWrap = 'break-word';
 
-    // Add text node
-    userBubble.appendChild(document.createTextNode(prompt));
+    // Add text node when present
+    if (prompt) userBubble.appendChild(document.createTextNode(prompt));
 
-    // Add image thumbnails below text
-    if (base64Images.length > 0) {
-        const imgContainer = document.createElement('div');
-        imgContainer.style.cssText = 'margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;';
-        base64Images.forEach(imgSrc => {
-            const imgEl = document.createElement('img');
-            imgEl.src = imgSrc;
-            imgEl.style.cssText = 'max-width:200px; max-height:200px; border-radius:6px; border:1px solid #c7d2fe; object-fit:contain; background:white;';
-            imgContainer.appendChild(imgEl);
+    // Add attachments under the sent message (images + files)
+    if (messageAttachments.length > 0) {
+        const attContainer = document.createElement('div');
+        attContainer.className = 'ai-user-attachments';
+        if (!prompt) attContainer.classList.add('no-text');
+
+        messageAttachments.forEach((att) => {
+            const attCard = document.createElement('div');
+            attCard.className = 'ai-user-attachment';
+
+            if (att.kind === 'image') {
+                const thumb = document.createElement('img');
+                thumb.className = 'ai-user-attachment-thumb';
+                thumb.src = att.previewSrc;
+                thumb.alt = att.name;
+                attCard.appendChild(thumb);
+            } else {
+                const icon = document.createElement('span');
+                icon.className = 'ai-user-attachment-icon';
+                icon.textContent = (att.typeLabel || 'FILE').slice(0, 4);
+                attCard.appendChild(icon);
+            }
+
+            const textWrap = document.createElement('div');
+            textWrap.className = 'ai-user-attachment-text';
+
+            const name = document.createElement('span');
+            name.className = 'ai-user-attachment-name';
+            name.textContent = att.name;
+            name.title = att.name;
+
+            const meta = document.createElement('span');
+            meta.className = 'ai-user-attachment-meta';
+            meta.textContent = att.typeLabel || 'File';
+
+            textWrap.appendChild(name);
+            textWrap.appendChild(meta);
+            attCard.appendChild(textWrap);
+            attContainer.appendChild(attCard);
         });
-        userBubble.appendChild(imgContainer);
+
+        userBubble.appendChild(attContainer);
     }
 
     contentArea.appendChild(userBubble);
+    clearComposerAttachments();
 
     // Add edit button immediately to user message
     const messageIndex = messagePairs.length;
@@ -2128,10 +2227,8 @@ async function runAIQuery() {
 
         if (tray) tray.scrollTop = tray.scrollHeight;
 
-        // Clear attached files after successful send
-        attachedFiles = [];
-        const chipsEl = document.getElementById('ai-file-chips');
-        if (chipsEl) chipsEl.innerHTML = '';
+        // Ensure composer is fresh after successful send
+        clearComposerAttachments();
     } catch (e) {
         clearInterval(timerInt);
         if (e.name === 'AbortError') {
@@ -2394,19 +2491,62 @@ function initAIWidget() {
 
     function renderFileChip(file, container) {
         if (!container) return;
+
+        const isImage = file.type && file.type.startsWith("image/");
+        const ext = file.name.includes(".") ? file.name.split(".").pop().toUpperCase() : "FILE";
+        const typeLabel = isImage ? "Image" : ext;
+
         const chip = document.createElement("div");
         chip.className = "ai-file-chip";
+        chip.title = file.name;
+
+        if (isImage) {
+            const thumb = document.createElement("img");
+            const objectUrl = URL.createObjectURL(file);
+            thumb.src = objectUrl;
+            thumb.alt = file.name;
+            thumb.className = "ai-file-thumb";
+            thumb.setAttribute("data-object-url", objectUrl);
+            chip.appendChild(thumb);
+        } else {
+            const icon = document.createElement("span");
+            icon.className = "ai-file-icon";
+            icon.textContent = ext.length > 4 ? ext.slice(0, 4) : ext;
+            chip.appendChild(icon);
+        }
+
+        const textWrap = document.createElement("div");
+        textWrap.className = "ai-file-text";
+
         const nameSpan = document.createElement("span");
+        nameSpan.className = "ai-file-name";
         nameSpan.textContent = file.name;
         nameSpan.title = file.name;
+
+        const metaSpan = document.createElement("span");
+        metaSpan.className = "ai-file-meta";
+        metaSpan.textContent = typeLabel;
+
+        textWrap.appendChild(nameSpan);
+        textWrap.appendChild(metaSpan);
+
         const removeBtn = document.createElement("button");
-        removeBtn.innerHTML = "×";
+        removeBtn.className = "ai-file-remove";
+        removeBtn.type = "button";
         removeBtn.title = "Remove";
+        removeBtn.setAttribute("aria-label", `Remove ${file.name}`);
+        removeBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"><path d="M18 6 6 18"></path><path d="M6 6 18 18"></path></svg>`;
         removeBtn.addEventListener("click", () => {
+            const preview = chip.querySelector('[data-object-url]');
+            if (preview) {
+                const url = preview.getAttribute('data-object-url');
+                if (url) URL.revokeObjectURL(url);
+            }
             attachedFiles = attachedFiles.filter((f) => f !== file);
             chip.remove();
         });
-        chip.appendChild(nameSpan);
+
+        chip.appendChild(textWrap);
         chip.appendChild(removeBtn);
         container.appendChild(chip);
     }
@@ -2606,22 +2746,64 @@ async function loadConnections() {
     // Build new HTML off-screen as a string (avoids multiple repaints)
     currentConfigs = configs;
     const entries = Object.entries(configs).filter(([k]) => k !== 'detail');
+    const providerInitials = {
+        postgresql: 'PG',
+        mysql: 'MY',
+        mssql: 'MS',
+        oracle: 'OR',
+        sqlite: 'SQ',
+        jdbc: 'JD'
+    };
+    const inferProvider = (conf = {}, name = '') => {
+        const direct = String(conf.provider || conf.db_type || conf.database_type || '').toLowerCase();
+        if (direct) return direct;
+
+        const probe = [
+            conf.url,
+            conf.driver_class,
+            conf.host,
+            conf.database,
+            conf.user,
+            name
+        ].filter(Boolean).join(' ').toLowerCase();
+
+        if (probe.includes('postgres')) return 'postgresql';
+        if (probe.includes('mysql')) return 'mysql';
+        if (probe.includes('mssql') || probe.includes('sql server') || probe.includes('sqlserver')) return 'mssql';
+        if (probe.includes('oracle')) return 'oracle';
+        if (probe.includes('sqlite')) return 'sqlite';
+        if (probe.includes('jdbc')) return 'jdbc';
+        if (probe.includes('_post') || probe.includes('-post') || probe.includes(' post ')) return 'postgresql';
+        return '';
+    };
+    const inferredProviders = entries.map(([name, conf]) => inferProvider(conf, name)).filter(Boolean);
+    const defaultProvider = inferredProviders[0] || '';
     const html = entries.map(([name, conf]) => `
-        <div class="conn-item ${conf.active ? 'active' : ''}" style="transition:opacity 0.15s ease;">
-            <span style="flex:1" onclick="switchConnection('${name.replace(/'/g, "\\'")}')">${name} ${conf.active ? '✓' : ''}</span>
-            <button class="refresh-db-btn" title="Refresh connection" onclick="refreshDB(event, '${name.replace(/'/g, "\\'")}')">
-                ${ICON_REFRESH.replace('width="24"', 'width="16"').replace('height="24"', 'height="16"')}
-            </button>
-            <button class="edit-db-btn" title="Edit details" onclick="openEditConnectionForm(event, '${name.replace(/'/g, "\\'")}')">
-                ${ICON_EDIT.replace('width="24"', 'width="16"').replace('height="24"', 'height="16"')}
-            </button>
-            <button class="delete-db-btn" title="Delete connection" onclick="deleteDB(event, '${name.replace(/'/g, "\\'")}')">${trash}</button>
+        <div class="conn-item table-card conn-card ${conf.active ? 'active indexed' : ''}" style="transition:opacity 0.15s ease;">
+            <div class="table-card-main">
+                <div class="table-card-icon">${providerInitials[inferProvider(conf, name) || defaultProvider] || 'DB'}</div>
+                <div class="table-card-meta">
+                    <span class="conn-item-label table-card-name" onclick="switchConnection('${name.replace(/'/g, "\\'")}')">${name}</span>
+                    <div class="table-card-status ${conf.active ? 'indexed' : ''}">
+                        ${conf.active ? 'Active connection' : 'Available connection'}
+                    </div>
+                </div>
+            </div>
+            <div class="conn-item-actions table-card-actions multiple">
+                <button class="refresh-db-btn" title="Refresh connection" onclick="refreshDB(event, '${name.replace(/'/g, "\\'")}')">
+                    ${ICON_REFRESH.replace('width="24"', 'width="16"').replace('height="24"', 'height="16"')}
+                </button>
+                <button class="edit-db-btn" title="Edit details" onclick="openEditConnectionForm(event, '${name.replace(/'/g, "\\'")}')">
+                    ${ICON_EDIT.replace('width="24"', 'width="16"').replace('height="24"', 'height="16"')}
+                </button>
+                <button class="delete-db-btn" title="Delete connection" onclick="deleteDB(event, '${name.replace(/'/g, "\\'")}')">${trash}</button>
+            </div>
         </div>
     `).join('');
 
     // Single DOM write — no intermediate blank state
     list.style.opacity = '0';
-    list.innerHTML = html || '<div style="font-size:0.8rem;color:#64748b;padding:6px 0;">No connections yet.</div>';
+    list.innerHTML = html || '<div class="connection-list-empty">No connections yet.</div>';
     requestAnimationFrame(() => { list.style.transition = 'opacity 0.2s'; list.style.opacity = '1'; });
 
     // Load tables once, after connections are rendered
@@ -2630,17 +2812,16 @@ async function loadConnections() {
 
 async function deleteDB(event, name) {
     event.stopPropagation();
+    const deleteBtn = event.currentTarget || event.target.closest('button');
 
     if (!await customConfirm(`Are you sure you want to delete "${name}"?`, true)) {
         return;
     }
 
-    // Immediately animate the item out — no waiting for server
     const connItem = event.target.closest('.conn-item');
-    if (connItem) {
-        connItem.style.transition = 'opacity 0.15s ease, transform 0.15s ease';
-        connItem.style.opacity = '0';
-        connItem.style.transform = 'translateX(12px)';
+    if (deleteBtn) {
+        deleteBtn.disabled = true;
+        deleteBtn.style.opacity = '0.6';
     }
 
     try {
@@ -2650,8 +2831,6 @@ async function deleteDB(event, name) {
 
         if (!resp.ok) {
             const error = await resp.json();
-            // Restore item if server rejected
-            if (connItem) { connItem.style.opacity = '1'; connItem.style.transform = ''; }
             showToast('Failed to delete: ' + (error.detail || 'Unknown error'), 'error');
             return;
         }
@@ -2662,12 +2841,16 @@ async function deleteDB(event, name) {
             setTimeout(() => connItem?.remove(), 160);
             showToast(`"${name}" removed.`, 'info', 2500);
             // Only reload tables (the connection row is already gone)
-            loadTables();
+            loadTables({ preserve: true });
         }
 
     } catch (error) {
-        if (connItem) { connItem.style.opacity = '1'; connItem.style.transform = ''; }
         showToast('Failed to delete: ' + error.message, 'error');
+    } finally {
+        if (deleteBtn) {
+            deleteBtn.disabled = false;
+            deleteBtn.style.opacity = '1';
+        }
     }
 }
 
@@ -2869,10 +3052,16 @@ async function switchConnection(name) {
     }
 }
 
-async function loadTables() {
+async function loadTables(options = {}) {
     const tableList = document.getElementById('tables-list');
     if (!tableList) return;
-    tableList.innerHTML = 'Loading tables...';
+    const preserve = options.preserve === true;
+    const hasRendered = tableList.dataset.rendered === '1';
+    if (!preserve || !hasRendered) {
+        tableList.innerHTML = 'Loading tables...';
+    } else {
+        tableList.classList.add('is-updating');
+    }
     try {
         // Fetch tables list AND currently indexed RAG sources simultaneously
         const [tablesResp, ragResp] = await Promise.all([
@@ -2884,6 +3073,8 @@ async function loadTables() {
 
         if (!tablesData.tables || tablesData.tables.length === 0) {
             tableList.innerHTML = 'No active connection or tables found.';
+            tableList.dataset.rendered = '1';
+            tableList.classList.remove('is-updating');
             return;
         }
 
@@ -2891,52 +3082,51 @@ async function loadTables() {
         const indexedSources = new Set(ragData.sources || []);
 
         tableList.innerHTML = `
-            <div style="font-size:0.75rem; color:#64748b; margin-bottom:8px; font-style:italic;">
-                Click <strong style="color:#10b981;">🧠 + RAG</strong> to index a table into AI memory.
-            </div>
-            ${tablesData.tables.map(tbl => {
+            <div class="tables-helper-note">Click <strong>+ RAG</strong> to index a table into AI memory.</div>
+            <div class="table-card-grid">${tablesData.tables.map(tbl => {
             const isIndexed = indexedSources.has(tbl);
+            const isLoading = inflightTableActions.has(tbl);
             return `
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px;
-                            margin-bottom:4px; border-radius:6px;
-                            background:${isIndexed ? 'rgba(16,185,129,0.07)' : 'var(--bg-secondary)'};
-                            border:1px solid ${isIndexed ? '#10b981' : 'var(--border)'};">
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <span style="font-size:0.9rem;">${isIndexed ? '🧠' : '🗂️'}</span>
-                        <div>
-                            <span style="font-size:0.84rem; font-weight:500;">${tbl}</span>
-                            ${isIndexed ? `<div style="font-size:0.7rem; color:#10b981; font-weight:600; margin-top:1px;">✓ Indexed in RAG</div>` : ''}
+                <div class="table-card ${isIndexed ? 'indexed' : ''}">
+                    <div class="table-card-main">
+                        <div class="table-card-icon">${isIndexed ? 'AI' : 'DB'}</div>
+                        <div class="table-card-meta">
+                            <div class="table-card-name">${tbl}</div>
+                            <div class="table-card-status ${isIndexed ? 'indexed' : ''}">
+                                ${isIndexed ? 'Indexed in RAG' : 'Not Indexed in RAG'}
+                            </div>
                         </div>
                     </div>
-                    ${isIndexed
-                    ? `<button onclick="indexTable('${tbl}', event)"
-                                style="padding:3px 8px; font-size:0.7rem; font-weight:500; border-radius:4px;
-                                       background:transparent; color:#10b981; border:1px solid #10b981;
-                                       cursor:pointer; white-space:nowrap;">
-                                🔄 Re-index
-                           </button>`
-                    : `<button onclick="indexTable('${tbl}', event)"
-                                style="padding:4px 10px; font-size:0.75rem; font-weight:600; border-radius:4px;
-                                       background:#10b981; color:white; border:none; cursor:pointer;
-                                       display:flex; align-items:center; gap:4px;">
-                                🧠 + RAG
-                           </button>`
-                }
+                    <div class="table-card-actions">
+                        <button class="table-action-btn ${isIndexed ? 'secondary' : 'primary'} ${isLoading ? 'is-loading' : ''}" ${isLoading ? 'disabled' : ''} onclick="indexTable('${tbl}', event)">
+                            ${isIndexed ? 'Re-index' : '+ RAG'}
+                        </button>
+                    </div>
                 </div>`;
-        }).join('')}`;
+        }).join('')}</div>`;
+        tableList.dataset.rendered = '1';
+        tableList.classList.remove('is-updating');
     } catch (err) {
-        tableList.innerHTML = 'Error loading tables.';
+        if (!hasRendered) {
+            tableList.innerHTML = 'Error loading tables.';
+        }
+        tableList.classList.remove('is-updating');
     }
 }
 
 async function indexTable(tableName, event) {
     const btn = event.target.closest('button');
     if (!btn) return;
-    btn.innerHTML = '⏳ Indexing...';
+
+    if (inflightTableActions.has(tableName)) return;
     btn.disabled = true;
-    btn.style.opacity = '0.7';
+    btn.classList.add('is-loading');
+    inflightTableActions.add(tableName);
+
     try {
-        showToast(`⏳ Indexing "${tableName}" into RAG memory...`, 'info', 8000);
+        if (activeRagIndexToast) dismissToast(activeRagIndexToast);
+        activeRagIndexToast = showToast(`Indexing "${tableName}" into RAG memory...`, 'info', 0);
+
         const resp = await fetch('/api/index_table', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -2944,67 +3134,112 @@ async function indexTable(tableName, event) {
         });
         const result = await resp.json();
         if (resp.ok) {
-            showToast(`✅ "${tableName}" indexed into RAG! You can now ask questions about it.`, 'success', 5000);
-            // Reload both tables and RAG memory so the persistent badge appears immediately
-            await Promise.all([loadTables(), loadVectorMemory()]);
+            // Use the same completion polling path for +RAG and Re-index.
+            await pollUntilActionComplete((state) => state.sources.includes(tableName), { intervalMs: 2500 });
+            inflightTableActions.delete(tableName);
+            btn.disabled = false;
+            btn.classList.remove('is-loading');
+            await loadTables({ preserve: true });
+
+            if (activeRagIndexToast) {
+                dismissToast(activeRagIndexToast);
+                activeRagIndexToast = null;
+            }
+            showToast(`"${tableName}" indexed into RAG.`, 'success', 3000);
+            return;
         } else {
             throw new Error(result.message || 'Failed');
         }
     } catch (err) {
-        btn.innerHTML = '❌ Error';
-        btn.style.background = '#ef4444';
-        btn.style.opacity = '1';
-        showToast(`❌ Failed to index "${tableName}": ${err.message}`, 'error', 6000);
-        // Reset button after 3s on failure
-        setTimeout(() => {
-            btn.innerHTML = '🧠 + RAG';
+        if (activeRagIndexToast) {
+            dismissToast(activeRagIndexToast);
+            activeRagIndexToast = null;
+        }
+        showToast(`Failed to index "${tableName}": ${err.message}`, 'error', 6000);
+    } finally {
+        if (inflightTableActions.has(tableName)) {
+            inflightTableActions.delete(tableName);
             btn.disabled = false;
-            btn.style.background = '#10b981';
-            btn.style.opacity = '1';
-        }, 3000);
+            btn.classList.remove('is-loading');
+            await loadTables({ preserve: true });
+        }
     }
 }
 
-async function loadVectorMemory() {
+async function loadVectorMemory(options = {}) {
     const memoryList = document.getElementById('vector-memory-list');
     if (!memoryList) return;
-    memoryList.innerHTML = 'Loading memory...';
+    const preserve = options.preserve === true;
+    const hasRendered = memoryList.dataset.rendered === '1';
+    if (!preserve || !hasRendered) {
+        memoryList.innerHTML = 'Loading memory...';
+    } else {
+        memoryList.classList.add('is-updating');
+    }
     try {
         const resp = await fetch('/api/vector_memory');
         const data = await resp.json();
         if (!data.sources || data.sources.length === 0) {
             memoryList.innerHTML = 'No data currently indexed.';
+            memoryList.dataset.rendered = '1';
+            memoryList.classList.remove('is-updating');
             return;
         }
-        memoryList.innerHTML = data.sources.map(src => `
-            <div style="display:flex; justify-content:space-between; align-items:center; padding: 6px 0; border-bottom: 1px solid var(--border);">
-                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px;" title="${src}">${src}</span>
-                <button onclick="deleteVectorMemory('${src}')" style="background:transparent; color:#ef4444; border:none; cursor:pointer;" title="Delete from Memory">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                </button>
-            </div>
-        `).join('');
+        memoryList.innerHTML = `
+            <div class="table-card-grid memory-card-grid">${data.sources.map(src => `
+                <div class="table-card memory-card">
+                    <div class="table-card-main">
+                        <div class="table-card-icon">AI</div>
+                        <div class="table-card-meta">
+                            <div class="table-card-name memory-card-name" title="${src}">${src}</div>
+                            <div class="table-card-status indexed">Indexed in RAG</div>
+                        </div>
+                    </div>
+                    <div class="table-card-actions">
+                        <button class="memory-delete-btn table-action-btn danger ${inflightMemoryActions.has(src) ? 'is-loading' : ''}" ${inflightMemoryActions.has(src) ? 'disabled' : ''} onclick="deleteVectorMemory('${src}', event)" title="Delete from Memory">
+                            Delete
+                        </button>
+                    </div>
+                </div>
+            `).join('')}</div>`;
+        memoryList.dataset.rendered = '1';
+        memoryList.classList.remove('is-updating');
     } catch (err) {
-        memoryList.innerHTML = 'Error loading memory.';
+        if (!hasRendered) {
+            memoryList.innerHTML = 'Error loading memory.';
+        }
+        memoryList.classList.remove('is-updating');
     }
 }
 
-async function deleteVectorMemory(sourceName) {
-    if (!await customConfirm(`Remove "${sourceName}" from AI Vector Memory?\n\nThis will delete all indexed chunks for this source from ChromaDB.`, true)) return;
+async function deleteVectorMemory(sourceName, event) {
+    if (inflightMemoryActions.has(sourceName)) return;
+    inflightMemoryActions.add(sourceName);
+    await loadVectorMemory({ preserve: true });
+
+    if (!await customConfirm(`Remove "${sourceName}" from AI Vector Memory?\n\nThis will delete all indexed chunks for this source from ChromaDB.`, true)) {
+        inflightMemoryActions.delete(sourceName);
+        await loadVectorMemory({ preserve: true });
+        return;
+    }
     try {
         const resp = await fetch(`/api/vector_memory/${encodeURIComponent(sourceName)}`, {
             method: 'DELETE'
         });
         if (resp.ok) {
+            const loadingToast = showToast(`Removing "${sourceName}" from RAG memory...`, 'info', 0);
+            await pollUntilActionComplete((state) => !state.sources.includes(sourceName), { intervalMs: 2500 });
+            dismissToast(loadingToast);
             showToast(`🗑️ "${sourceName}" removed from Vector Memory.`, 'info', 3000);
-            // Refresh both the RAG list AND the tables list (so indexed badge clears)
-            await Promise.all([loadVectorMemory(), loadTables()]);
         } else {
             const error = await resp.json();
             showToast('Delete failed: ' + (error.detail || 'Unknown error'), 'error');
         }
     } catch (err) {
         showToast('Failed to delete memory block: ' + err.message, 'error');
+    } finally {
+        inflightMemoryActions.delete(sourceName);
+        await loadVectorMemory({ preserve: true });
     }
 }
 
