@@ -42,16 +42,20 @@ def _extract_from_docx(content: bytes) -> str:
     return text
 
 def _extract_from_excel(content: bytes) -> str:
-    text = ""
+    """
+    Extracts data from Excel file and converts to clean CSV format.
+    For multiple sheets, only the first sheet is used to avoid parsing issues.
+    Returns pure CSV data without any headers or metadata.
+    """
     try:
         with io.BytesIO(content) as f:
-            df_dict = pd.read_excel(f, sheet_name=None)
-            for sheet_name, df in df_dict.items():
-                text += f"--- Sheet: {sheet_name} ---\n"
-                text += df.to_csv(index=False) + "\n"
+            # Read only the first sheet to avoid multi-sheet CSV issues
+            df = pd.read_excel(f, sheet_name=0)
+            # Convert to CSV without index, pure data only
+            csv_string = df.to_csv(index=False)
+            return csv_string
     except Exception as e:
-        text += f"Error parsing excel file: {str(e)}"
-    return text
+        return f"Error parsing excel file: {str(e)}"
 
 def is_structured_file(filename: str) -> bool:
     """Returns True if the file contains tabular/structured data."""

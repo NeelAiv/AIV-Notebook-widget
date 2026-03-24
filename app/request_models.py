@@ -1,19 +1,15 @@
 from pydantic import BaseModel, Field
-from typing import List, Any, Optional
+from typing import List, Any, Optional, Union
 
 class QueryRequest(BaseModel):
-    # Ensures the prompt is a string and is not empty
-    prompt: str = Field(..., min_length=1, description="The user's natural language question")
-    # NEW: List of notebook cell contents (each string is a cell's code)
-    notebook_cells: List[str] = Field(default_factory=list, description="Contents of the active notebook cells")
-    # Existing: Active variables from browser memory
-    variables: List[str] = Field(default_factory=list, description="Active variables in browser memory")
-    chat_history: List[Any] = Field(default_factory=list, description="Previous chat messages")
-    images: List[str] = Field(default_factory=list) # <--- NEW FIELD
-    datasets: List[Any] = Field(default_factory=list) # <--- NEW FIELD FOR TEXT FILES
-    use_db_context: bool = True # <--- NEW FIELD FOR TOGGLE
-
-    # --- NEW FIELDS FOR MODIFICATION ---
+    prompt: str = Field(..., min_length=1)
+    notebook_cells: List[Union[str, dict]] = Field(default_factory=list)  # Accept both string and dict formats
+    variables: List[str] = Field(default_factory=list)
+    chat_history: List[Any] = Field(default_factory=list)
+    images: List[str] = Field(default_factory=list)
+    datasets: List[Any] = Field(default_factory=list)
+    use_db_context: bool = True
+    use_rag_context: bool = False
     is_modification: bool = False
     original_code: Optional[str] = None
     active_cell_id: Optional[str] = None

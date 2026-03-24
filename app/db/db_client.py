@@ -25,6 +25,8 @@ class DBClient:
         conf = configs[active_name]
         self.provider = conf.get('provider', 'postgresql')
         
+        print(f"🔄 Refreshing connection to: {active_name} (provider: {self.provider})")
+        
         try:
             # NEW: If a direct Connection URL was provided, use it as-is
             direct_url = conf.get('url', '').strip()
@@ -89,6 +91,10 @@ class DBClient:
             self.refresh_connection()
         if not self.engine: 
             return []
+        
+        # Log which database is being queried
+        active_name = get_active_name()
+        print(f"📊 Executing query on database: {active_name}")
         
         is_select = query.strip().upper().startswith("SELECT")
         

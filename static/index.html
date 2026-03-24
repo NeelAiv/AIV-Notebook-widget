@@ -6,6 +6,7 @@
 
     <link rel="stylesheet" href="/static/style.css">
     <script src="https://cdn.jsdelivr.net/pyodide/v0.29.3/full/pyodide.js"></script>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap%22
         rel=" stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -522,6 +523,14 @@
                             <label class="toggle-switch-db" title="Include Database Schema in AI Context">
                                 <span class="db-toggle-label">Use DB Context</span>
                                 <input type="checkbox" id="ai-use-db-toggle">
+                                <span class="slider round"></span>
+                            </label>
+
+                            <label class="toggle-switch-db" title="Include RAG / Document Knowledge in AI Context">
+                                <span class="db-toggle-label"
+                                    style="font-size:0.75rem; color:var(--text-secondary); font-family:var(--font-primary); white-space:nowrap;">Use
+                                    RAG</span>
+                                <input type="checkbox" id="ai-use-rag-toggle">
                                 <span class="slider round"></span>
                             </label>
 

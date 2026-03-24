@@ -19,6 +19,7 @@ from app.orchestrator import IncidentOrchestrator
 from app.session_manager import session_manager
 from app.request_models import QueryRequest
 from app.utils.file_parser import extract_text_from_file, is_structured_file, is_unstructured_file, extract_structured_metadata
+from app.utils.logger import info, error, warning
 
 app = FastAPI(title="InsightEdge AI Notebook")
 
@@ -54,6 +55,8 @@ async def get_index():
 @app.post("/query")
 async def run_ai_query(req: QueryRequest, request: Request):
     orchestrator = get_orchestrator(request)
+    session_id = request.headers.get("X-Session-ID", "default")
+    info(f"Received query request for session {session_id}")
     try:
         # 1. If user attached text/csv files via chat, set them as the active context
         if req.datasets:
@@ -76,8 +79,13 @@ async def run_ai_query(req: QueryRequest, request: Request):
                         content_text = f"Error decoding {filename}: {str(e)}"
                 else:
                     content_text = content_raw
-                    
-                parsed_datasets.append(f"--- File: {filename} ---\n{content_text}")
+                
+                # For structured files (CSV/Excel), don't add file header - just pure CSV data
+                if is_structured_file(filename):
+                    parsed_datasets.append(content_text)
+                else:
+                    # For unstructured files, add file header for context
+                    parsed_datasets.append(f"--- File: {filename} ---\n{content_text}")
                 
             combined_text = "\n\n".join(parsed_datasets)
             
@@ -101,7 +109,7 @@ async def run_ai_query(req: QueryRequest, request: Request):
                         except: pass
                     if valid_chunks:
                         vs.add_chunks(last_filename, valid_chunks, embeddings)
-                        print(f"\u2705 Auto-indexed {last_filename} into RAG ({len(valid_chunks)} chunks)")
+                        print(f"  └─ ✅ Auto-indexed {last_filename} into RAG ({len(valid_chunks)} chunks)")
                 except Exception as e:
                     print(f"Auto-RAG indexing failed: {e}")
             else:
@@ -125,8 +133,14 @@ async def run_ai_query(req: QueryRequest, request: Request):
             is_modification=req.is_modification,
             original_code=req.original_code,
             active_cell_id=req.active_cell_id,
-            use_db_context=req.use_db_context
+            use_db_context=req.use_db_context,
+            use_rag_context=req.use_rag_context
         )
+        
+        # If datasets were attached in this turn, return the text content so JS can inject it into Pyodide
+        if req.datasets:
+            result['active_file_content'] = combined_text
+            info(f"Attached context size: {len(combined_text)} chars")
         
         history_manager.add_to_history(
             req.prompt, 
@@ -135,6 +149,7 @@ async def run_ai_query(req: QueryRequest, request: Request):
             str(req.notebook_cells),
             session_id=request.headers.get("X-Session-ID", "default")
         )
+        info(f"Query Result: Tool={result.get('tool_used')} | Answer Length={len(result.get('answer', ''))}")
         return result
     except Exception as e:
         print(f"ERROR IN /query: {e}")
@@ -266,11 +281,14 @@ async def upload_file(file: UploadFile = File(...), request: Request = None):
     Uploads a file, extracts text, and sets it as context for the user's session Orchestrator.
     """
     orchestrator = get_orchestrator(request)
+    session_id = request.headers.get("X-Session-ID", "default")
+    filename = file.filename
+    info(f"File upload request: {filename} (Session: {session_id})")
+    
     ALLOWED_EXTENSIONS = {
         ".txt", ".pdf", ".docx", ".csv", ".py", ".js", ".json", ".ipynb", 
         ".html", ".css", ".md", ".xlsx", ".xls", ".png", ".jpg", ".jpeg", ".webp"
     }
-    filename = file.filename
     ext = os.path.splitext(filename)[1].lower()
 
     if ext not in ALLOWED_EXTENSIONS:
@@ -287,6 +305,7 @@ async def upload_file(file: UploadFile = File(...), request: Request = None):
             return {
                 "status": "success",
                 "filename": filename,
+                "content": extracted_text,
                 "message": f"Structured file uploaded. AI will use metadata ({metadata.split(chr(10))[1] if chr(10) in metadata else 'summary'}) instead of full data for smart analysis."
             }
         elif is_unstructured_file(filename):
@@ -393,9 +412,19 @@ async def execute_sql_bridge(req: Request):
 @app.post("/api/connections/activate")
 async def activate_conn(req: Request):
     data = await req.json()
-    config_manager.set_active(data['name'])
-    get_orchestrator(req).db.refresh_connection()
-    return {"status": "activated"}
+    connection_name = data['name']
+    info(f"Activating database connection: {connection_name}")
+    config_manager.set_active(connection_name)
+    
+    # Refresh the current session's database connection
+    orchestrator = get_orchestrator(req)
+    orchestrator.db.refresh_connection()
+    
+    # Also verify the active connection was set correctly
+    active = config_manager.get_active_name()
+    info(f"Active database after switch: {active}")
+    
+    return {"status": "activated", "active_connection": active}
 
 @app.get("/api/history")
 async def get_hist(req: Request):
