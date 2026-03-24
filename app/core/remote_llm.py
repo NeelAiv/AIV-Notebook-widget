@@ -6,215 +6,297 @@ from openai import OpenAI
 
 CONFIG_FILE = "llm_config.json"
 
-# 👉 Define your OpenAI API key here
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+# Provider registry — base_url=None means use the SDK's default (OpenAI official)
+PROVIDERS = {
+    "openai":     {"base_url": None,                                          "default_model": "gpt-4o"},
+    "deepseek":   {"base_url": "https://api.deepseek.com/v1",                 "default_model": "deepseek-chat"},
+    "nvidia":     {"base_url": "https://integrate.api.nvidia.com/v1",         "default_model": "meta/llama-3.1-70b-instruct"},
+    "openrouter": {"base_url": "https://openrouter.ai/api/v1",                "default_model": "openai/gpt-4o"},
+    "gemini":     {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "default_model": "gemini-2.0-flash"},
+    "claude":     {"base_url": None,                                          "default_model": "claude-3-5-sonnet-20241022"},
+    "custom":     {"base_url": None,                                          "default_model": "qwen-vision"},
+}
 
 class LLMClient:
     def __init__(self):
-        # FIXED: Updated to the correct OpenAI-compatible completions endpoint
         self.custom_server_url = "http://95.217.115.227:8098/v1/chat/completions"
+        self.client = None          # OpenAI-compatible client
+        self.anthropic_client = None
         self.load_config()
 
     def load_config(self):
-        """Loads LLM settings from JSON file and initializes the active client."""
+        """Loads settings from llm_config.json and initialises the right SDK client."""
         self.config = {
-            "provider": "custom", 
-            "openai_model": "gpt-4o"
+            "provider": "custom",
+            "model": "",
+            "api_key": "",
+            # Legacy key names kept for backward compat
+            "openai_model": "gpt-4o",
+            "openai_api_key": "",
         }
-        
+
         if os.path.exists(CONFIG_FILE):
             try:
                 with open(CONFIG_FILE, "r") as f:
-                    file_config = json.load(f)
-                    if "provider" in file_config:
-                        self.config["provider"] = file_config["provider"]
-                    if "openai_model" in file_config:
-                        self.config["openai_model"] = file_config["openai_model"]
-            except json.JSONDecodeError:
+                    saved = json.load(f)
+                self.config.update(saved)
+            except (json.JSONDecodeError, OSError):
                 pass
 
-        if self.config["provider"] == "openai" and OPENAI_API_KEY and OPENAI_API_KEY != "OPENAI_API_KEY":
-            self.openai_client = OpenAI(api_key=OPENAI_API_KEY)
-            print(f"🧠 Using OpenAI Provider (Model: {self.config['openai_model']})")
-        else:
-            if self.config["provider"] == "openai":
-                print("⚠️ OpenAI selected but OPENAI_API_KEY is missing/invalid. Falling back to custom.")
+        # Normalise: if old config used openai_model/openai_api_key, migrate
+        if not self.config.get("model"):
+            self.config["model"] = self.config.get("openai_model") or ""
+        if not self.config.get("api_key"):
+            self.config["api_key"] = self.config.get("openai_api_key") or ""
+
+        self._init_client()
+
+    def _init_client(self):
+        provider = self.config.get("provider", "custom")
+        api_key  = self.config.get("api_key", "").strip()
+        model    = self.config.get("model", "").strip()
+
+        if not model:
+            self.config["model"] = PROVIDERS.get(provider, {}).get("default_model", "")
+
+        self.client = None
+        self.anthropic_client = None
+
+        if provider == "custom":
+            print(f"🧠 Custom LLM → {self.custom_server_url}")
+            return
+
+        if not api_key:
+            print(f"⚠️  Provider '{provider}' selected but no API key saved — falling back to custom.")
             self.config["provider"] = "custom"
-            self.openai_client = None
-            print(f"🧠 Using Custom Remote LLM Server: {self.custom_server_url}")
+            return
+
+        if provider == "claude":
+            try:
+                import anthropic
+                self.anthropic_client = anthropic.Anthropic(api_key=api_key)
+                print(f"🧠 Claude → {self.config['model']}")
+            except ImportError:
+                print("⚠️  anthropic package not installed. Run: pip install anthropic")
+                self.config["provider"] = "custom"
+            return
+
+        # All other providers are OpenAI-compatible
+        base_url = PROVIDERS.get(provider, {}).get("base_url")
+        kwargs = {"api_key": api_key}
+        if base_url:
+            kwargs["base_url"] = base_url
+        self.client = OpenAI(**kwargs)
+        print(f"🧠 {provider.title()} → {self.config['model']}")
 
     def update_config(self, new_config: dict):
-        """Updates and saves the configuration."""
-        if "provider" in new_config:
-            self.config["provider"] = new_config["provider"]
-        if "openai_model" in new_config:
-            self.config["openai_model"] = new_config["openai_model"]
-            
+        """Merges new settings, persists to disk, reinitialises client."""
+        for key in ("provider", "model", "api_key", "openai_model", "openai_api_key"):
+            if key in new_config and new_config[key]:
+                self.config[key] = new_config[key]
+
+        save_data = {k: v for k, v in self.config.items() if v}
         with open(CONFIG_FILE, "w") as f:
-            json.dump(self.config, f, indent=4)
+            json.dump(save_data, f, indent=4)
         self.load_config()
 
-    def generate(self, system_message: str, user_message: str, images: list = None, tools: list = None):
-        """Routes the prompt to the active provider and handles Native Tool Calling."""
-        if self.config["provider"] == "openai" and self.openai_client:
-            print(f"    📡 Routing to OpenAI ({self.config.get('openai_model')})")
-            return self._generate_openai(system_message, user_message, images, tools)
-        print(f"    📡 Routing to Custom LLM ({self.custom_server_url})")
+    # ------------------------------------------------------------------
+    # Public generate — routes to the right backend
+    # ------------------------------------------------------------------
+    def generate(self, system_message: str, user_message: str,
+                 images: list = None, tools: list = None):
+        provider = self.config.get("provider", "custom")
+        model    = self.config.get("model", "")
+        print(f"    📡 {provider.title()} → {model}")
+
+        if provider == "claude" and self.anthropic_client:
+            return self._generate_claude(system_message, user_message, tools)
+
+        if provider != "custom" and self.client:
+            return self._generate_openai_compat(system_message, user_message, images, tools)
+
+        # Fallback: custom streaming server
         return self._generate_custom(system_message, user_message, images, tools)
 
-    def _generate_openai(self, system_message: str, user_message: str, images: list = None, tools: list = None):
+    # ------------------------------------------------------------------
+    # OpenAI-compatible (OpenAI / DeepSeek / Nvidia / OpenRouter / Gemini)
+    # ------------------------------------------------------------------
+    def _generate_openai_compat(self, system_message, user_message, images=None, tools=None):
+        model = self.config.get("model") or "gpt-4o"
         messages = [{"role": "system", "content": system_message}]
-        
+
         if images:
-            content_array =[{"type": "text", "text": user_message}]
-            for img_b64 in images:
-                if not img_b64.startswith("data:image"):
-                    img_b64 = f"data:image/jpeg;base64,{img_b64}"
-                content_array.append({
-                    "type": "image_url",
-                    "image_url": {"url": img_b64}
-                })
-            messages.append({"role": "user", "content": content_array})
+            content = [{"type": "text", "text": user_message}]
+            for img in images:
+                if not img.startswith("data:image"):
+                    img = f"data:image/jpeg;base64,{img}"
+                content.append({"type": "image_url", "image_url": {"url": img}})
+            messages.append({"role": "user", "content": content})
         else:
             messages.append({"role": "user", "content": user_message})
 
         try:
             kwargs = {
-                "model": self.config["openai_model"],
+                "model": model,
                 "messages": messages,
                 "temperature": 0.2,
-                "max_tokens": self.config.get("max_tokens", 3000)
+                "max_tokens": self.config.get("max_tokens", 3000),
             }
-            
             if tools:
                 kwargs["tools"] = tools
                 kwargs["tool_choice"] = "auto"
 
-            response = self.openai_client.chat.completions.create(**kwargs)
-            msg = response.choices[0].message
-            
+            resp = self.client.chat.completions.create(**kwargs)
+            msg  = resp.choices[0].message
+
             if tools:
                 if msg.tool_calls:
-                    calls =[]
+                    calls = []
                     for tc in msg.tool_calls:
                         args = tc.function.arguments
                         try: args = json.loads(args)
                         except: pass
                         calls.append({"name": tc.function.name, "arguments": args})
                     return {"type": "tool_calls", "tool_calls": calls, "content": msg.content or ""}
-                else:
-                    return {"type": "text", "content": msg.content or ""}
-            else:
-                return msg.content.strip() if msg.content else ""
-                
+                return {"type": "text", "content": msg.content or ""}
+            return msg.content.strip() if msg.content else ""
+
         except Exception as e:
-            err = f"Error connecting to OpenAI: {str(e)}"
+            err = f"Error ({self.config['provider']}): {e}"
             return {"type": "text", "content": err} if tools else err
 
-    def _generate_custom(self, system_message: str, user_message: str, images: list = None, tools: list = None):
-        messages =[{"role": "system", "content": system_message}]
-        
+    # ------------------------------------------------------------------
+    # Claude (Anthropic SDK)
+    # ------------------------------------------------------------------
+    def _generate_claude(self, system_message, user_message, tools=None):
+        model = self.config.get("model") or "claude-3-5-sonnet-20241022"
+        try:
+            kwargs = {
+                "model": model,
+                "max_tokens": self.config.get("max_tokens", 3000),
+                "system": system_message,
+                "messages": [{"role": "user", "content": user_message}],
+            }
+
+            if tools:
+                # Convert OpenAI tool schema → Anthropic tool schema
+                claude_tools = []
+                for t in tools:
+                    fn = t["function"]
+                    claude_tools.append({
+                        "name": fn["name"],
+                        "description": fn.get("description", ""),
+                        "input_schema": fn.get("parameters", {"type": "object", "properties": {}}),
+                    })
+                kwargs["tools"] = claude_tools
+
+            resp = self.anthropic_client.messages.create(**kwargs)
+
+            if tools:
+                tool_uses = [b for b in resp.content if b.type == "tool_use"]
+                if tool_uses:
+                    calls = [{"name": b.name, "arguments": b.input} for b in tool_uses]
+                    text  = next((b.text for b in resp.content if b.type == "text"), "")
+                    return {"type": "tool_calls", "tool_calls": calls, "content": text}
+                text = next((b.text for b in resp.content if b.type == "text"), "")
+                return {"type": "text", "content": text}
+
+            return next((b.text for b in resp.content if b.type == "text"), "").strip()
+
+        except Exception as e:
+            err = f"Error (Claude): {e}"
+            return {"type": "text", "content": err} if tools else err
+
+    # ------------------------------------------------------------------
+    # Custom streaming server (unchanged)
+    # ------------------------------------------------------------------
+    def _generate_custom(self, system_message, user_message, images=None, tools=None):
+        messages = [{"role": "system", "content": system_message}]
+
         if images:
-            content_array =[{"type": "text", "text": user_message}]
-            for img_b64 in images:
-                if not img_b64.startswith("data:image"):
-                    img_b64 = f"data:image/jpeg;base64,{img_b64}"
-                content_array.append({
-                    "type": "image_url",
-                    "image_url": {"url": img_b64} 
-                })
-            messages.append({"role": "user", "content": content_array})
+            content = [{"type": "text", "text": user_message}]
+            for img in images:
+                if not img.startswith("data:image"):
+                    img = f"data:image/jpeg;base64,{img}"
+                content.append({"type": "image_url", "image_url": {"url": img}})
+            messages.append({"role": "user", "content": content})
         else:
             messages.append({"role": "user", "content": user_message})
 
         payload = {
-            "model": "qwen-vision", 
+            "model": "qwen-vision",
             "messages": messages,
-            "max_tokens": 2048,  # Increased from 1024 for better responses
-            "temperature": 0.1,  # Reduced from 0.05 for faster generation
-            "stream": True 
+            "max_tokens": 2048,
+            "temperature": 0.1,
+            "stream": True,
         }
-
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
-
-        headers = {'Content-Type': 'application/json'}
+            print(f"    🛠️  Tools: {[t['function']['name'] for t in tools]}")
 
         try:
-            response = requests.post(self.custom_server_url, headers=headers, json=payload, stream=True, timeout=60)  # Reduced timeout from 1200
-            response.raise_for_status() 
-            
+            resp = requests.post(
+                self.custom_server_url,
+                headers={"Content-Type": "application/json"},
+                json=payload, stream=True, timeout=60
+            )
+            resp.raise_for_status()
+
             final_text = ""
             thinking_text = ""
             tool_calls_acc = {}
-            
-            if tools:
-                print(f"    🛠️  Payload Tools: {[t['function']['name'] for t in tools]}")
-            
-            for line in response.iter_lines():
-                if line:
-                    decoded_line = line.decode('utf-8')
-                    if decoded_line.startswith("data:"):
-                        data_str = decoded_line[5:].strip()
-                        if data_str == "[DONE]":
-                            break
-                        
-                        try:
-                            chunk = json.loads(data_str)
-                            delta = chunk.get("choices", [{}])[0].get("delta", {})
-                            
-                            if "reasoning_content" in delta and delta["reasoning_content"]:
-                                thinking_text += delta["reasoning_content"]
-                                
-                            if "content" in delta and delta["content"]:
-                                final_text += delta["content"]
-                                
-                            if "tool_calls" in delta:
-                                for tc in delta["tool_calls"]:
-                                    idx = tc.get("index", 0)
-                                    if idx not in tool_calls_acc:
-                                        func = tc.get("function", {})
-                                        tool_calls_acc[idx] = {
-                                            "name": func.get("name", ""),
-                                            "arguments": func.get("arguments", "")
-                                        }
-                                    else:
-                                        func = tc.get("function", {})
-                                        if "arguments" in func:
-                                            tool_calls_acc[idx]["arguments"] += func["arguments"]
-                                            
-                        except json.JSONDecodeError:
-                            pass
-            
+
+            for line in resp.iter_lines():
+                if not line:
+                    continue
+                decoded = line.decode("utf-8")
+                if not decoded.startswith("data:"):
+                    continue
+                data_str = decoded[5:].strip()
+                if data_str == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data_str)
+                    delta = chunk.get("choices", [{}])[0].get("delta", {})
+                    if delta.get("reasoning_content"):
+                        thinking_text += delta["reasoning_content"]
+                    if delta.get("content"):
+                        final_text += delta["content"]
+                    for tc in delta.get("tool_calls", []):
+                        idx = tc.get("index", 0)
+                        fn  = tc.get("function", {})
+                        if idx not in tool_calls_acc:
+                            tool_calls_acc[idx] = {"name": fn.get("name", ""), "arguments": fn.get("arguments", "")}
+                        elif "arguments" in fn:
+                            tool_calls_acc[idx]["arguments"] += fn["arguments"]
+                except json.JSONDecodeError:
+                    pass
+
             if thinking_text:
                 print(f"--- THINKING ---\n{thinking_text}\n----------------")
+            final_text = re.sub(r"<think>.*?</think>", "", final_text, flags=re.DOTALL).strip()
 
-            final_text = re.sub(r'<think>.*?</think>', '', final_text, flags=re.DOTALL).strip()
-            
             if tools:
                 if tool_calls_acc:
-                    calls =[]
+                    calls = []
                     for call in tool_calls_acc.values():
                         args = call["arguments"]
                         try: args = json.loads(args)
                         except: pass
                         calls.append({"name": call["name"], "arguments": args})
-                    return {"type": "tool_calls", "tool_calls": calls, "content": final_text, "thinking": thinking_text}
-                else:
-                    return {"type": "text", "content": final_text, "thinking": thinking_text}
-            else:
-                return final_text
-            
-        except requests.exceptions.Timeout:
-            err = "Error: Remote Custom LLM timed out."
-            return {"type": "text", "content": err} if tools else err
-        except requests.exceptions.HTTPError as e:
-            err = f"HTTP Error connecting to Custom LLM: {e.response.text}"
-            return {"type": "text", "content": err} if tools else err
-        except Exception as e:
-            err = f"Error connecting to Custom LLM: {str(e)}"
-            return {"type": "text", "content": err} if tools else err
+                    return {"type": "tool_calls", "tool_calls": calls, "content": final_text}
+                return {"type": "text", "content": final_text}
+            return final_text
 
-# Singleton instance
+        except requests.exceptions.Timeout:
+            err = "Error: Custom LLM timed out."
+        except requests.exceptions.HTTPError as e:
+            err = f"HTTP Error (custom): {e.response.text}"
+        except Exception as e:
+            err = f"Error (custom): {e}"
+        return {"type": "text", "content": err} if tools else err
+
+
+# Singleton
 llm_instance = LLMClient()

@@ -43,6 +43,41 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 @app.get("/health")
 async def health(): return {"status": "ok"}
 
+@app.post("/api/summarize_context")
+async def summarize_context(req: Request):
+    """Summarizes the current chat history into a compact handoff for a new session."""
+    data = await req.json()
+    history = data.get("chat_history", [])
+    orchestrator = get_orchestrator(req)
+
+    if not history:
+        return {"summary": ""}
+
+    # Build a condensed transcript (last 20 turns max)
+    turns = []
+    for msg in history[-20:]:
+        role = msg.get("role", "")
+        content = msg.get("content", "")[:400]  # cap each message
+        turns.append(f"{role.upper()}: {content}")
+    transcript = "\n".join(turns)
+
+    system_msg = (
+        "You are a context summarizer. Given a chat transcript between a user and a data analyst AI, "
+        "produce a concise handoff summary (max 200 words) covering: "
+        "1) What data/tables were discussed, "
+        "2) Key findings or queries run, "
+        "3) What the user was trying to achieve. "
+        "Write it as a briefing for the AI's next session so it has full context."
+    )
+    user_msg = f"Summarize this chat for handoff:\n\n{transcript}"
+
+    try:
+        result = orchestrator.llm.generate(system_msg, user_msg)
+        summary = result if isinstance(result, str) else result.get("content", "")
+        return {"summary": summary.strip()}
+    except Exception as e:
+        return {"summary": f"Previous session covered: {len(history)//2} exchanges."}
+
 @app.get("/", response_class=HTMLResponse)
 async def get_index():
     with open("static/index.html", "r", encoding="utf-8") as f:
@@ -330,8 +365,33 @@ async def upload_file(file: UploadFile = File(...), request: Request = None):
         
 @app.get("/api/llm/settings")
 async def get_llm_settings(request: Request):
-    """Returns current LLM configuration (reads from the session's orchestrator)"""
-    return get_orchestrator(request).llm.config
+    """Returns current LLM configuration — never exposes the raw API key."""
+    config = get_orchestrator(request).llm.config
+    return {
+        "provider": config.get("provider", "custom"),
+        "model": config.get("model") or config.get("openai_model", ""),
+        "openai_model": config.get("model") or config.get("openai_model", ""),
+        "has_api_key": bool(config.get("api_key") or config.get("openai_api_key", ""))
+    }
+
+@app.post("/api/llm/test")
+async def test_llm_connection(request: Request):
+    """Sends a minimal ping to the configured provider to validate the API key."""
+    orchestrator = get_orchestrator(request)
+    llm = orchestrator.llm
+    provider = llm.config.get("provider", "custom")
+
+    if provider == "custom":
+        return {"status": "ok", "message": "Custom server — no key validation needed."}
+
+    try:
+        result = llm.generate("You are a test assistant.", "Reply with just: ok")
+        text = result if isinstance(result, str) else result.get("content", "")
+        if "error" in text.lower() or "invalid" in text.lower() or "unauthorized" in text.lower():
+            return {"status": "error", "message": text[:200]}
+        return {"status": "ok", "message": f"Connected to {provider.title()} successfully."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)[:200]}
 
 @app.post("/api/llm/settings")
 async def save_llm_settings(req: Request):

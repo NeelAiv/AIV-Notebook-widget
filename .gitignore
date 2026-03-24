@@ -8,3 +8,12 @@ connections.json
 *.log
 .vscode/
 .idea/
+
+# ChromaDB — runtime vector store, rebuilt automatically on first use
+chroma_db/
+
+# SQLite insight DB — runtime data
+app/db/insight.db
+
+# LLM config contains API keys
+llm_config.json

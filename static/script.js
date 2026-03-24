@@ -1972,6 +1972,7 @@ async function runEditedQuery(prompt, messageIndex) {
         // Persist to chatHistory
         chatHistory.push({ role: 'user', content: prompt });
         chatHistory.push({ role: 'assistant', content: answer });
+        updateContextMeter();
 
         // Code block handling (mirrors runAIQuery)
         let codeNode = null;
@@ -2365,6 +2366,7 @@ async function runAIQuery() {
         // Update history
         chatHistory.push({ role: "user", content: prompt, images: base64Images.length > 0 ? base64Images : undefined });
         chatHistory.push({ role: "assistant", content: answer });
+        updateContextMeter();
 
         // Only match explicit Python code blocks (```python or ```py) — NOT ```sql, ``` plain, etc.
         const codeMatch = originalAnswer.match(/```(?:python|py)\n([\s\S]*?)```/i);
@@ -3827,7 +3829,19 @@ function renderChatHistory(history) {
             body.style.cssText = "font-size:0.95rem; line-height:1.5;";
 
             if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
-                body.innerHTML = DOMPurify.sanitize(marked.parse(msg.content || ''));
+                let displayContent = msg.content || '';
+                const pairIdx = Array.from(contentArea.querySelectorAll('.ai-msg.assistant')).length;
+                // Replace python code blocks with a clickable pill
+                displayContent = displayContent.replace(/```(?:python|py)\n[\s\S]*?```/gi, (match) => {
+                    return `\n<a href="#" class="notebook-cell-ref" data-pair-index="${pairIdx}" style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;font-size:0.8rem;color:#4f46e5;text-decoration:none;margin:4px 0;">📓 Cell ${pairIdx + 1} — click to jump</a>\n`;
+                });
+                // Collapse other code fences
+                displayContent = displayContent.replace(/```[\s\S]*?```/g, (match) => {
+                    const lang = match.match(/```(\w*)/)?.[1] || '';
+                    const lineCount = match.split('\n').length - 2;
+                    return lang ? `\`[${lang.toUpperCase()} — ${lineCount} lines]\`` : `\`[code — ${lineCount} lines]\``;
+                });
+                body.innerHTML = DOMPurify.sanitize(marked.parse(displayContent), { ADD_ATTR: ['data-pair-index'] });
             } else {
                 body.innerText = msg.content;
             }
@@ -3840,6 +3854,23 @@ function renderChatHistory(history) {
 
     const tray = document.getElementById("ai-response-tray");
     if (tray) tray.scrollTop = tray.scrollHeight;
+
+    // Wire up notebook cell jump links
+    contentArea.querySelectorAll('a.notebook-cell-ref').forEach(link => {
+        link.addEventListener('click', (e) => {
+            e.preventDefault();
+            const pairIdx = parseInt(link.dataset.pairIndex, 10);
+            let target = document.getElementById(`cell-${pairIdx + 1}`);
+            if (!target) {
+                const allCells = document.querySelectorAll('#workspace-view .code-cell');
+                target = allCells[pairIdx] || allCells[allCells.length - 1];
+            }
+            if (target) {
+                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                if (typeof activateCell === 'function') activateCell(target);
+            }
+        });
+    });
 }
 async function uploadNotebook() {
     const input = document.createElement('input');
@@ -4945,38 +4976,93 @@ async function uploadFile() {
 }
 
 // Fetch settings when the settings drawer is opened
+const PROVIDER_DEFAULTS = {
+    openai:     { model: "gpt-4o",                          hint: "sk-..." },
+    deepseek:   { model: "deepseek-chat",                   hint: "sk-..." },
+    claude:     { model: "claude-3-5-sonnet-20241022",      hint: "sk-ant-..." },
+    gemini:     { model: "gemini-2.0-flash",                hint: "AIza..." },
+    nvidia:     { model: "meta/llama-3.1-70b-instruct",     hint: "nvapi-..." },
+    openrouter: { model: "openai/gpt-4o",                   hint: "sk-or-..." },
+    custom:     { model: "",                                 hint: "No key needed" },
+};
+
+function onProviderChange() {
+    const provider = document.getElementById('llm-provider').value;
+    const defaults = PROVIDER_DEFAULTS[provider] || {};
+    const modelEl = document.getElementById('llm-openai-model');
+    const keyEl   = document.getElementById('llm-api-key');
+    const hintEl  = document.getElementById('llm-key-hint');
+    if (modelEl && defaults.model) modelEl.placeholder = defaults.model;
+    if (keyEl)  keyEl.placeholder = defaults.hint || 'API key';
+    if (hintEl && provider === 'custom') hintEl.textContent = 'No API key needed for local server.';
+    else if (hintEl) hintEl.textContent = 'Saved locally on the server. Never shared.';
+    // Recalculate meter for the new model's context window
+    if (typeof updateContextMeter === 'function') updateContextMeter();
+}
+
 async function loadLLMSettings() {
     try {
         const resp = await fetch('/api/llm/settings');
         const config = await resp.json();
 
-        document.getElementById('llm-provider').value = config.provider || 'custom';
-        document.getElementById('llm-openai-model').value = config.openai_model || 'gpt-4o';
+        const providerEl = document.getElementById('llm-provider');
+        const modelEl    = document.getElementById('llm-openai-model');
+        const keyEl      = document.getElementById('llm-api-key');
+
+        if (providerEl) providerEl.value = config.provider || 'custom';
+        if (modelEl)    modelEl.value    = config.model || config.openai_model || '';
+        if (keyEl)      keyEl.placeholder = config.has_api_key ? '••••••••••••••••••••' : (PROVIDER_DEFAULTS[config.provider]?.hint || 'API key');
+        onProviderChange();
     } catch (e) {
         console.error("Failed to load LLM settings", e);
     }
 }
 
-// Save settings back to the server
 async function saveLLMSettings() {
-    const data = {
-        provider: document.getElementById('llm-provider').value,
-        openai_model: document.getElementById('llm-openai-model').value
-    };
+    const provider = document.getElementById('llm-provider').value;
+    const model    = document.getElementById('llm-openai-model').value.trim();
+    const keyEl    = document.getElementById('llm-api-key');
+    const apiKey   = keyEl ? keyEl.value.trim() : '';
+
+    const data = { provider, model, openai_model: model };
+    if (apiKey) { data.api_key = apiKey; data.openai_api_key = apiKey; }
+
+    const statusEl = document.getElementById('llm-status-msg');
 
     try {
+        // Save first
         const resp = await fetch('/api/llm/settings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        const result = await resp.json();
+        await resp.json();
+        if (keyEl) keyEl.value = '';
 
-        const statusEl = document.getElementById('llm-status-msg');
-        statusEl.innerText = result.message || "Settings Saved!";
-        setTimeout(() => statusEl.innerText = "", 3000);
+        // Then test the connection
+        if (provider !== 'custom') {
+            statusEl.style.color = '#94a3b8';
+            statusEl.innerText = 'Testing connection…';
+            const testResp = await fetch('/api/llm/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Session-ID': SESSION_ID }
+            });
+            const testResult = await testResp.json();
+            if (testResult.status === 'ok') {
+                statusEl.style.color = '#10b981';
+                statusEl.innerText = '✓ ' + testResult.message;
+            } else {
+                statusEl.style.color = '#ef4444';
+                statusEl.innerText = '✗ Invalid key: ' + testResult.message;
+            }
+        } else {
+            statusEl.style.color = '#10b981';
+            statusEl.innerText = 'Settings saved.';
+        }
+        setTimeout(() => { statusEl.innerText = ''; statusEl.style.color = ''; }, 5000);
     } catch (e) {
-        await customAlert("Failed to save settings: " + e.message);
+        statusEl.style.color = '#ef4444';
+        statusEl.innerText = 'Error: ' + e.message;
     }
 }
 
@@ -5118,3 +5204,197 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 });
+
+// ======================================================
+// CONTEXT WINDOW METER
+// ======================================================
+
+// Token context windows per provider/model (in tokens, ~4 chars each)
+// soft = warn at 75%, hard = rollover at 90%
+const CTX_WINDOWS = {
+    // OpenAI
+    "gpt-4o":                    128000,
+    "gpt-4o-mini":               128000,
+    "gpt-4-turbo":               128000,
+    "gpt-3.5-turbo":             16385,
+    // DeepSeek
+    "deepseek-chat":             64000,
+    "deepseek-reasoner":         64000,
+    // Claude
+    "claude-3-5-sonnet-20241022": 200000,
+    "claude-3-5-haiku-20241022":  200000,
+    "claude-3-opus-20240229":     200000,
+    // Gemini
+    "gemini-2.0-flash":          1000000,
+    "gemini-1.5-pro":            2000000,
+    "gemini-1.5-flash":          1000000,
+    // Nvidia NIM (varies by model, conservative default)
+    "meta/llama-3.1-70b-instruct": 128000,
+    "meta/llama-3.1-8b-instruct":  128000,
+    // OpenRouter — inherits from underlying model, use conservative default
+    // Custom server
+    "qwen-vision":               32000,
+};
+const CTX_DEFAULT_TOKENS = 32000; // fallback for unknown models
+
+function getCtxLimits() {
+    // Read current provider/model from the settings if available
+    const providerEl = document.getElementById('llm-provider');
+    const modelEl    = document.getElementById('llm-openai-model');
+    const model = (modelEl ? modelEl.value.trim() : '') || 'gpt-4o';
+
+    // Find best match (exact, then prefix)
+    let tokens = CTX_WINDOWS[model];
+    if (!tokens) {
+        const key = Object.keys(CTX_WINDOWS).find(k => model.startsWith(k) || k.startsWith(model));
+        tokens = key ? CTX_WINDOWS[key] : CTX_DEFAULT_TOKENS;
+    }
+
+    const totalChars = tokens * 4;
+    return {
+        soft: Math.round(totalChars * 0.75),  // warn at 75%
+        hard: Math.round(totalChars * 0.90),  // rollover at 90%
+        totalChars,
+        tokens
+    };
+}
+
+let contextSummaryHandoff = null; // Summary injected at start of new session after rollover
+
+function toggleContextPopover(ringEl) {
+    const pop = document.getElementById('context-meter-popover');
+    if (!pop) return;
+    const isOpen = pop.style.display !== 'none';
+    pop.style.display = isOpen ? 'none' : 'block';
+}
+
+// Close popover when clicking outside
+document.addEventListener('click', (e) => {
+    const wrap = document.getElementById('context-meter-wrap');
+    const pop  = document.getElementById('context-meter-popover');
+    if (pop && wrap && !wrap.contains(e.target)) {
+        pop.style.display = 'none';
+    }
+});
+
+function estimateContextChars() {
+    // Count chars from chatHistory (what gets sent to the LLM)
+    let total = 0;
+    for (const msg of chatHistory) {
+        total += (msg.content || '').length;
+    }
+    return total;
+}
+
+function updateContextMeter() {
+    const chars = estimateContextChars();
+    const msgs = Math.floor(chatHistory.length / 2);
+    const { soft, hard, tokens } = getCtxLimits();
+    const pct = Math.min(chars / hard, 1);
+    const displayPct = Math.round(pct * 100);
+
+    const arc    = document.getElementById('context-meter-arc');
+    const pctEl  = document.getElementById('context-meter-pct');
+    const textEl = document.getElementById('context-meter-text');
+    const newBtn = document.getElementById('context-new-chat-btn');
+    if (!arc) return;
+
+    const circumference = 69.1;
+    arc.style.strokeDashoffset = circumference * (1 - pct);
+
+    let color = '#22c55e';
+    if (pct >= 0.9) color = '#ef4444';
+    else if (pct >= 0.6) color = '#f59e0b';
+    arc.style.stroke = color;
+    pctEl.style.color = color;
+    pctEl.textContent = displayPct > 0 ? displayPct + '%' : '';
+
+    const usedK = Math.round(chars / 4 / 1000);
+    const totalK = Math.round(tokens / 1000);
+
+    if (msgs === 0) {
+        textEl.textContent = 'No context yet';
+    } else if (pct < 0.6) {
+        textEl.textContent = `${msgs} message${msgs !== 1 ? 's' : ''} · ~${usedK}k / ${totalK}k tokens`;
+    } else if (pct < 0.9) {
+        textEl.textContent = `Context filling up · ~${usedK}k / ${totalK}k tokens`;
+    } else {
+        textEl.textContent = `Context almost full · ~${usedK}k / ${totalK}k tokens`;
+    }
+
+    newBtn.style.display = pct >= 0.6 ? 'block' : 'none';
+
+    if (chars >= hard) {
+        triggerContextRollover(true);
+    }
+}
+
+async function triggerContextRollover(auto = false) {
+    if (chatHistory.length === 0) return;
+
+    const newBtn = document.getElementById('context-new-chat-btn');
+    if (newBtn) { newBtn.disabled = true; newBtn.textContent = 'Summarizing…'; }
+
+    try {
+        const resp = await fetch('/api/summarize_context', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Session-ID': SESSION_ID },
+            body: JSON.stringify({ chat_history: chatHistory })
+        });
+        const data = await resp.json();
+        contextSummaryHandoff = data.summary || null;
+    } catch (e) {
+        contextSummaryHandoff = `Previous session: ${Math.floor(chatHistory.length / 2)} exchanges.`;
+    }
+
+    // Start a new chat, injecting the summary as the first assistant message
+    if (typeof createNewChat === 'function') createNewChat();
+    else clearChatUI();
+
+    if (contextSummaryHandoff) {
+        // Inject summary as a system-style note at the top of the new chat
+        const contentArea = document.getElementById('ai-content-area');
+        if (contentArea) {
+            const note = document.createElement('div');
+            note.style.cssText = 'margin:8px 0;padding:10px 14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;font-size:0.8rem;color:#166534;line-height:1.5;';
+            note.innerHTML = `<strong>📋 Context carried over from previous session:</strong><br>${DOMPurify.sanitize(contextSummaryHandoff)}`;
+            contentArea.appendChild(note);
+        }
+        // Pre-seed chatHistory so the LLM knows the summary
+        chatHistory.push({ role: 'assistant', content: `[Session handoff] ${contextSummaryHandoff}` });
+    }
+
+    if (newBtn) { newBtn.disabled = false; newBtn.textContent = 'New session ↗'; }
+    updateContextMeter();
+
+    if (!auto) {
+        // Show toast
+        if (typeof showToast === 'function') showToast('New session started with context summary', 'success');
+    }
+}
+
+// Hook into every AI response to update the meter
+const _origPushHistory = chatHistory.push.bind(chatHistory);
+// We patch via a proxy so any push to chatHistory triggers a meter update
+(function patchChatHistoryForMeter() {
+    const handler = {
+        get(target, prop) {
+            if (prop === 'push') {
+                return function(...args) {
+                    const result = Array.prototype.push.apply(target, args);
+                    updateContextMeter();
+                    return result;
+                };
+            }
+            return typeof target[prop] === 'function'
+                ? target[prop].bind(target)
+                : target[prop];
+        }
+    };
+    // We can't replace chatHistory with a Proxy after it's declared with let,
+    // so instead we call updateContextMeter() explicitly after each query.
+    // The meter is updated via updateContextMeter() calls in runAIQuery.
+})();
+
+// Also update meter when chat is loaded from history
+document.addEventListener('chatLoaded', updateContextMeter);
