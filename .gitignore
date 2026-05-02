@@ -8,4 +8,15 @@ connections.json
 *.log
 .vscode/
 .idea/
-chroma_db
+
+# ChromaDB — runtime vector store
+chroma_db/
+
+# SQLite runtime DB
+app/db/insight.db
+
+# LLM config contains API keys — configure via the Settings UI or OPENAI_API_KEY env var
+llm_config.json
+
+# Notebooks with potentially sensitive query history (remove this line if you want them tracked)
+notebooks/
