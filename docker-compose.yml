@@ -7,8 +7,13 @@ services:
     ports:
       - "8090:8090"
     volumes:
+      # Persist runtime data outside the container
       - ./notebooks:/app/notebooks
+      - ./chroma_db:/app/chroma_db
       - ./connections.json:/app/connections.json
       - ./history.json:/app/history.json
-      - ./.env:/app/.env
-    restart: always
+      - ./llm_config.json:/app/llm_config.json
+    environment:
+      # Optional: set API key via env var instead of the UI
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    restart: unless-stopped

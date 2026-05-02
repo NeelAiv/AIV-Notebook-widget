@@ -194,6 +194,9 @@ async def run_ai_query(req: QueryRequest, request: Request):
 
 from app.db.vector_store import vector_store
 
+# Tracks cancellation flags for running indexing jobs: key = "session_id:table_name"
+_cancel_flags: dict = {}
+
 def process_and_index_rag(text_data: str, source_name: str, session_id: str = "default"):
     """Runs in the background: Chunks text, gets embeddings, saves to ChromaDB"""
     orchestrator = session_manager.get_orchestrator(session_id)
@@ -215,27 +218,35 @@ def process_and_index_rag(text_data: str, source_name: str, session_id: str = "d
 
 def process_and_index_table(table_name: str, session_id: str = "default"):
     """Retrieves all rows from a DB table, embeds them, and saves to ChromaDB."""
+    job_key = f"{session_id}:{table_name}"
+    _cancel_flags[job_key] = False
+
     orchestrator = session_manager.get_orchestrator(session_id)
     print(f"Starting to index table '{table_name}'...")
     db = orchestrator.db
     if not db.engine:
         print("No active DB connection to index table.")
+        _cancel_flags.pop(job_key, None)
         return
 
-    # Basic fetch (we assume table size is manageable for a demo. In production, paginate)
     query = f"SELECT * FROM {table_name}"
     rows = db.execute_query(query)
-    
+
     if not rows:
         print(f"⚠️ Table {table_name} is empty or unreadable.")
+        _cancel_flags.pop(job_key, None)
         return
 
     valid_chunks = []
     embeddings = []
-    
-    for row in rows:
-        # Convert dictionary row into a clean string representation
-        # Ex: "id: 1, name: parth, product: Apple"
+    total = len(rows)
+
+    for i, row in enumerate(rows):
+        if _cancel_flags.get(job_key):
+            print(f"🛑 Indexing of '{table_name}' cancelled at row {i}/{total}.")
+            _cancel_flags.pop(job_key, None)
+            return
+
         row_str = ", ".join([f"{k}: {v}" for k, v in row.items()])
         try:
             vec = orchestrator.embedder.get_embedding(row_str)
@@ -243,9 +254,13 @@ def process_and_index_table(table_name: str, session_id: str = "default"):
             embeddings.append(vec)
         except Exception:
             continue
-            
+
+        if total > 10 and i % max(1, total // 10) == 0:
+            print(f"  ↳ '{table_name}': {i}/{total} rows ({round(i/total*100)}%)")
+
     vector_store.add_chunks(table_name, valid_chunks, embeddings)
-    print(f"✅ Finished indexing table '{table_name}' for RAG into ChromaDB!")
+    _cancel_flags.pop(job_key, None)
+    print(f"✅ Finished indexing table '{table_name}' ({len(valid_chunks)} chunks) for RAG into ChromaDB!")
 
 @app.post("/api/index_rag")
 async def trigger_rag_indexing(req: Request, background_tasks: BackgroundTasks):
@@ -272,6 +287,27 @@ async def trigger_table_indexing(req: Request, background_tasks: BackgroundTasks
     session_id = req.headers.get("X-Session-ID", "default")
     background_tasks.add_task(process_and_index_table, table_name, session_id)
     return {"status": "indexing_started", "message": f"Indexing table '{table_name}' in the background..."}
+
+@app.post("/api/index_table/cancel")
+async def cancel_table_indexing(req: Request):
+    """Sets the cancel flag for a running table indexing job."""
+    data = await req.json()
+    table_name = data.get('table_name')
+    session_id = req.headers.get("X-Session-ID", "default")
+    job_key = f"{session_id}:{table_name}"
+
+    # Try exact session match first
+    if job_key in _cancel_flags:
+        _cancel_flags[job_key] = True
+        return {"status": "cancelled", "message": f"Cancel signal sent for '{table_name}'."}
+
+    # Fallback: find any job for this table regardless of session
+    for key in list(_cancel_flags.keys()):
+        if key.endswith(f":{table_name}"):
+            _cancel_flags[key] = True
+            return {"status": "cancelled", "message": f"Cancel signal sent for '{table_name}'."}
+
+    return {"status": "not_found", "message": f"No active indexing job found for '{table_name}'."}
 
 @app.get("/api/vector_memory")
 async def get_vector_memory():
