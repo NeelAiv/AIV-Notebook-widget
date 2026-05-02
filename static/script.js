@@ -1,4 +1,4 @@
-﻿// ======================================================
+﻿﻿// ======================================================
 // SESSION ISOLATION — Multi-user support
 // ======================================================
 // Generate a unique session ID per browser tab and persist it in sessionStorage.
@@ -656,16 +656,21 @@ function removeCellById(cellId) {
 
 function createAIPreviewCodeCell(referenceActiveCell) {
     // Reuse the last code cell if it is empty (whitespace-only) before creating a new cell.
-    const allCodeCells = Array.from(document.querySelectorAll('.code-cell:not(.text-cell)'));
-    const lastCodeCell = allCodeCells.length ? allCodeCells[allCodeCells.length - 1] : null;
-    if (lastCodeCell) {
-        const lastEditor = getCodeEditorFromCell(lastCodeCell);
-        const lastCode = lastEditor ? getCodeFromEditor(lastEditor) : '';
-        if (lastEditor && (!lastCode || lastCode.trim() === '')) {
+    
+    // Check if there's an existing empty code cell we can reuse
+    const allCodeCells = document.querySelectorAll('.code-cell:not(.text-cell)');
+    if (allCodeCells.length > 0) {
+        const lastCodeCell = allCodeCells[allCodeCells.length - 1];
+        const editor = getCodeEditorFromCell(lastCodeCell);
+        const code = editor ? getCodeFromEditor(editor).trim() : '';
+        
+        // If the last cell is empty, reuse it
+        if (code === '') {
+            console.log('Reusing empty code cell:', lastCodeCell.id);
             return { cell: lastCodeCell, createdNewCell: false };
         }
     }
-
+    
     // Prefer inserting below selected active code cell for Colab-like behavior.
     if (referenceActiveCell) {
         const barBelow = referenceActiveCell.nextElementSibling;
@@ -894,6 +899,7 @@ function createProposalActionsRow(proposalId) {
 }
 
 function stageCodeProposalUI(code, prompt) {
+    console.log("[stageCodeProposalUI] Starting with code length:", code.length);
     const container = document.createElement('div');
     container.className = 'ai-code-proposal';
 
@@ -903,6 +909,8 @@ function stageCodeProposalUI(code, prompt) {
     clearPendingCodeProposal({ restoreOriginal: true, removeProposalUi: true, deleteNewCell: true });
     const proposalType = flowDecision.flow;
     const proposalId = `proposal_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+    console.log("[stageCodeProposalUI] Flow decision:", proposalType);
 
     let targetCell = null;
     let originalCode = '';
@@ -920,11 +928,14 @@ function stageCodeProposalUI(code, prompt) {
         const createdNewCell = created ? created.createdNewCell : false;
         const targetEditor = getCodeEditorFromCell(targetCell);
 
+        console.log("[stageCodeProposalUI] Created cell:", targetCell?.id, "Editor:", !!targetEditor);
+
         if (!targetCell || !targetEditor) {
             const info = document.createElement('div');
             info.className = 'ai-proposal-info';
             info.textContent = 'Could not create a new cell for preview.';
             container.appendChild(info);
+            console.error("[stageCodeProposalUI] Failed to create cell or editor");
             return container;
         }
 
@@ -934,6 +945,8 @@ function stageCodeProposalUI(code, prompt) {
         setCodeToEditor(targetEditor, code);
         targetCell.classList.add('ai-cell-preview');
         flashCellUpdated(targetCell);
+
+        console.log("[stageCodeProposalUI] Code set to editor, cell ID:", targetCell.id);
 
         pendingCodeProposal = {
             proposalId,
@@ -955,9 +968,12 @@ function stageCodeProposalUI(code, prompt) {
     const actionsEl = createProposalActionsRow(proposalId);
     container.appendChild(actionsEl);
 
+    console.log("[stageCodeProposalUI] Actions row created and appended");
+
     if (pendingCodeProposal && pendingCodeProposal.proposalId === proposalId && pendingCodeProposal.proposalType === 'new') {
         pendingCodeProposal.containerEl = container;
         pendingCodeProposal.actionsEl = actionsEl;
+        console.log("[stageCodeProposalUI] Returning container for 'new' proposal");
         return container;
     }
 
@@ -975,6 +991,7 @@ function stageCodeProposalUI(code, prompt) {
         diffEl
     };
 
+    console.log("[stageCodeProposalUI] Returning container for 'edit' proposal");
     return container;
 }
 
@@ -1028,47 +1045,42 @@ async function initPyodide() {
             # --- DB BRIDGE ---
 
             async def query_db(sql_query):
-
+                """Execute SQL query against the backend database and return results as DataFrame."""
                 try:
-
-                    response = await pyfetch(
-
-                        url="/api/execute_sql",
-
-                        method="POST",
-
-                        headers={"Content-Type": "application/json"},
-
-                        body=json.dumps({"sql": sql_query})
-
+                    import js
+                    from pyodide.ffi import to_js
+                    
+                    # Use JavaScript fetch directly (more reliable)
+                    fetch_promise = js.fetch(
+                        "/api/execute_sql",
+                        to_js({
+                            "method": "POST",
+                            "headers": {"Content-Type": "application/json"},
+                            "body": js.JSON.stringify({"sql": sql_query})
+                        }, dict_converter=js.Object.fromEntries)
                     )
+                    
+                    response = await fetch_promise
+                    json_promise = response.json()
+                    resp_json = await json_promise
+                    resp_dict = resp_json.to_py()
 
-                    resp_json = await response.json()
-
-                    if resp_json.get("status") == "error":
-
-                        print(f"❌ SQL Error: {resp_json.get('message')}")
-
+                    if resp_dict.get("status") == "error":
+                        print(f"❌ SQL Error: {resp_dict.get('message')}")
                         return None
 
-                    data = resp_json.get("data", [])
+                    data = resp_dict.get("data", [])
 
                     if data:
-
-                        # Now 'pd' is defined!
-
                         return pd.DataFrame(data)
-
                     else:
-
                         print("✅ Query executed (No rows).")
-
                         return pd.DataFrame()
 
                 except Exception as e:
-
-                    print(f"⚠️ Network Error: {e}")
-
+                    print(f"⚠️ Database Error: {e}")
+                    import traceback
+                    traceback.print_exc()
                     return None
  
             # --- USER NAMESPACE (The 'Memory') ---
@@ -1223,10 +1235,9 @@ async function runCode(id) {
     }
 
     // 1. Capture Python Print Statements
-    // We direct them straight to the div
     const printHandler = (text) => {
         const pre = document.createElement("pre");
-        pre.style.margin = "0"; // compact
+        pre.style.margin = "0";
         pre.innerText = text;
         outDiv.appendChild(pre);
     };
@@ -1253,7 +1264,6 @@ async function runCode(id) {
         await pyodide.loadPackagesFromImports(code);
 
         // 2. EXECUTE CODE (Supports await automatically!)
-        // We pass 'user_ns' so variables are saved.
         let result = await pyodide.runPythonAsync(code, {
             globals: pyodide.globals.get("user_ns")
         });
@@ -1262,23 +1272,106 @@ async function runCode(id) {
 
         // 3. Handle "Last Line Value" (like Jupyter)
         if (result !== undefined && result !== null) {
-            // Check for Pandas DataFrame or HTML repr
-            if (result._repr_html_) {
-                const div = document.createElement("div");
-                div.innerHTML = result._repr_html_();
-                div.style.overflowX = "auto";
-                outDiv.appendChild(div);
+            console.log('📊 Result type:', result.type);
+            console.log('📊 Has _repr_html_:', !!result._repr_html_);
+
+            let rendered = false;
+
+            // Try _repr_html_ first — works for both Plotly figures and DataFrames
+            if (!rendered && result._repr_html_) {
+                try {
+                    const htmlContent = result._repr_html_();
+
+                    // Detect if it's a Plotly figure (contains plotly JS)
+                    const isPlotly = htmlContent.includes('plotly') || htmlContent.includes('Plotly');
+
+                    if (isPlotly) {
+                        const div = document.createElement("div");
+                        div.style.width = "100%";
+                        div.innerHTML = htmlContent;
+                        outDiv.appendChild(div);
+                        // Execute any inline scripts (Plotly needs this)
+                        div.querySelectorAll('script').forEach(oldScript => {
+                            const newScript = document.createElement('script');
+                            newScript.textContent = oldScript.textContent;
+                            oldScript.parentNode.replaceChild(newScript, oldScript);
+                        });
+                        rendered = true;
+                        console.log('✅ Plotly rendered via _repr_html_');
+                    } else {
+                        // DataFrame or other HTML — extract table if present
+                        const tableMatch = htmlContent.match(/<table[\s\S]*?<\/table>/);
+                        const tableHtml = tableMatch ? tableMatch[0] : htmlContent;
+                        const div = document.createElement("div");
+                        div.innerHTML = tableHtml;
+                        div.style.overflowX = "auto";
+                        div.style.maxWidth = "100%";
+
+                        const table = div.querySelector('table');
+                        if (table) {
+                            table.style.borderCollapse = 'collapse';
+                            table.style.width = '100%';
+                            table.style.fontSize = '0.9rem';
+                            table.style.fontFamily = "system-ui, -apple-system, sans-serif";
+                            table.style.border = '1px solid #d1d5db';
+                            table.querySelectorAll('th').forEach(th => {
+                                th.style.background = '#f3f4f6';
+                                th.style.color = '#1f2937';
+                                th.style.padding = '10px 12px';
+                                th.style.textAlign = 'left';
+                                th.style.fontWeight = '600';
+                                th.style.borderBottom = '2px solid #d1d5db';
+                                th.style.fontSize = '0.85rem';
+                            });
+                            table.querySelectorAll('td').forEach(td => {
+                                td.style.padding = '8px 12px';
+                                td.style.borderBottom = '1px solid #e5e7eb';
+                                td.style.color = '#374151';
+                            });
+                            outDiv.appendChild(div);
+                            rendered = true;
+                            console.log('✅ DataFrame rendered via _repr_html_');
+                        } else if (htmlContent.trim()) {
+                            // Generic HTML output
+                            const div2 = document.createElement("div");
+                            div2.innerHTML = htmlContent;
+                            outDiv.appendChild(div2);
+                            rendered = true;
+                        }
+                    }
+                } catch (e) {
+                    console.error('❌ _repr_html_ render error:', e);
+                }
             }
-            // Check for plain text representation (if not 'None')
-            else if (result.type !== "NoneType") {
+
+            // Fallback: try Plotly.js directly via to_json
+            if (!rendered && result.to_json) {
+                try {
+                    const figObj = JSON.parse(result.to_json());
+                    const plotDiv = document.createElement("div");
+                    plotDiv.style.width = "100%";
+                    plotDiv.style.height = "450px";
+                    outDiv.appendChild(plotDiv);
+                    if (typeof Plotly !== 'undefined') {
+                        Plotly.newPlot(plotDiv, figObj.data, figObj.layout, {responsive: true});
+                        rendered = true;
+                        console.log('✅ Plotly rendered via to_json fallback');
+                    }
+                } catch (e) {
+                    console.error('❌ Plotly to_json fallback error:', e);
+                }
+            }
+
+            // Final fallback: plain text
+            if (!rendered && result.type !== "NoneType") {
                 printHandler(result.toString());
             }
+
             // Cleanup JS proxy
             if (result.destroy) result.destroy();
         }
 
         // 4. Handle Plots (Matplotlib)
-        // Call our helper function
         const plotDataRaw = await pyodide.runPythonAsync("post_exec_helper()");
         const plotData = JSON.parse(plotDataRaw);
         if (plotData.image) {
@@ -1733,6 +1826,65 @@ function editMessage(messageIndex) {
 
 
 // ======================================================
+// COLLECT NOTEBOOK CELLS WITH METADATA
+// ======================================================
+function collectNotebookCells() {
+    const cellsData = [];
+    const allCells = document.querySelectorAll('.code-cell');
+    
+    allCells.forEach((cellEl, index) => {
+        const cellId = cellEl.id; // e.g., "cell-1"
+        const numericId = getCellNumericId(cellEl);
+        const isTextCell = cellEl.classList.contains('text-cell');
+        const isActive = cellEl.classList.contains('active');
+        
+        let code = '';
+        let output = '';
+        
+        if (isTextCell) {
+            // Text cell
+            const textEditor = cellEl.querySelector('.text-editor');
+            code = textEditor ? (textEditor.innerHTML || '') : '';
+        } else {
+            // Code cell
+            const codeEditor = cellEl.querySelector('.code-editor');
+            if (codeEditor) {
+                code = getCodeFromEditor(codeEditor);
+            }
+            
+            // Get output
+            const outDiv = cellEl.querySelector('.code-output');
+            if (outDiv) {
+                // Extract text content, excluding images
+                const textContent = Array.from(outDiv.childNodes)
+                    .filter(node => node.nodeName !== 'IMG')
+                    .map(node => node.textContent || '')
+                    .join('\n')
+                    .trim();
+                output = textContent.substring(0, 500); // Limit output size
+            }
+        }
+        
+        cellsData.push({
+            id: cellId,
+            index: index,
+            type: isTextCell ? 'text' : 'code',
+            code: code,
+            output: output,
+            is_active: isActive
+        });
+    });
+    
+    console.log('📊 Collected cells:', cellsData.length, 'cells');
+    const activeCells = cellsData.filter(c => c.is_active);
+    if (activeCells.length > 0) {
+        console.log('✅ Active cell:', activeCells[0].id);
+    }
+    
+    return cellsData;
+}
+
+// ======================================================
 // REGENERATE QUERY AFTER EDIT
 // ======================================================
 
@@ -1748,9 +1900,8 @@ async function runEditedQuery(prompt, messageIndex) {
     const tray = document.getElementById('ai-response-tray');
     if (!contentArea) return;
 
-    // Collect notebook context
-    const cells = Array.from(document.querySelectorAll('.code-editor, .text-editor'))
-        .map(el => (el.value !== undefined ? el.value : el.innerHTML));
+    // Collect notebook context with metadata
+    const cells = collectNotebookCells();
 
     let activeVars = [];
     if (pyodide) {
@@ -1821,6 +1972,7 @@ async function runEditedQuery(prompt, messageIndex) {
         // Persist to chatHistory
         chatHistory.push({ role: 'user', content: prompt });
         chatHistory.push({ role: 'assistant', content: answer });
+        updateContextMeter();
 
         // Code block handling (mirrors runAIQuery)
         let codeNode = null;
@@ -1958,9 +2110,8 @@ async function runAIQuery() {
         mini.setAttribute("aria-hidden", "false");
     }
 
-    // Collect context (same idea as your current code)
-    const cells = Array.from(document.querySelectorAll(".code-editor, .text-editor"))
-        .map((el) => (el.value !== undefined ? el.value : el.innerHTML));
+    // Collect context with metadata
+    const cells = collectNotebookCells();
 
     // Variables from Pyodide namespace (keeps your existing approach)
     let activeVars = [];
@@ -2115,6 +2266,7 @@ async function runAIQuery() {
         setAILoading(true);
 
         const useDbContext = document.getElementById('ai-use-db-toggle') ? document.getElementById('ai-use-db-toggle').checked : false;
+        const useRagContext = document.getElementById('ai-use-rag-toggle') ? document.getElementById('ai-use-rag-toggle').checked : false;
 
         let reqPayload = {
             prompt: prompt,
@@ -2123,15 +2275,38 @@ async function runAIQuery() {
             chat_history: chatHistory,
             images: base64Images,
             datasets: uploadedTextFiles,
-            use_db_context: useDbContext
+            use_db_context: useDbContext,
+            use_rag_context: useRagContext
         };
 
         const pL = prompt.toLowerCase();
         if (pL.includes("fix") || pL.includes("update") || pL.includes("change") || pL.includes("modify")) {
             reqPayload.is_modification = true;
-            reqPayload.active_cell_id = lastActiveCellId ? String(lastActiveCellId) : null;
-            if (lastActiveCellId) {
-                const ce = document.querySelector(`#cell-${lastActiveCellId} .code-editor`);
+            
+            // Try to find the active cell - prefer lastActiveCellId, then look for cell with focus, then use last code cell
+            let activeCellId = lastActiveCellId;
+            
+            if (!activeCellId) {
+                // Look for cell with focus
+                const focusedCell = document.querySelector('.code-cell:focus-within');
+                if (focusedCell) {
+                    activeCellId = focusedCell.id.replace('cell-', '');
+                }
+            }
+            
+            if (!activeCellId) {
+                // Use the last code cell
+                const allCodeCells = document.querySelectorAll('.code-cell:not(.text-cell)');
+                if (allCodeCells.length > 0) {
+                    const lastCell = allCodeCells[allCodeCells.length - 1];
+                    activeCellId = lastCell.id.replace('cell-', '');
+                }
+            }
+            
+            reqPayload.active_cell_id = activeCellId ? String(activeCellId) : null;
+            
+            if (activeCellId) {
+                const ce = document.querySelector(`#cell-${activeCellId} .code-editor`);
                 if (ce) {
                     if (ce.nextSibling && ce.nextSibling.classList && ce.nextSibling.classList.contains('CodeMirror')) {
                         reqPayload.original_code = ce.nextSibling.CodeMirror.getValue();
@@ -2153,14 +2328,34 @@ async function runAIQuery() {
 
         const data = await resp.json();
         clearInterval(timerInt);
+        console.log("[AI Query] Received response:", data);
+
+        // If the server returned content (for files attached in chat), inject it into Pyodide
+        if (data.active_file_content && pyodide) {
+            try {
+                const userNs = pyodide.globals.get("user_ns");
+                userNs.set("dataset_string", data.active_file_content);
+                console.log(`[Pyodide] Injected 'dataset_string' from chat (${data.active_file_content.length} chars)`);
+                console.log(`[Pyodide] First 200 chars:`, data.active_file_content.substring(0, 200));
+            } catch (err) {
+                console.error("Failed to inject dataset_string into Pyodide:", err);
+                console.error("Error details:", err.stack);
+            }
+        } else if (data.active_file_content) {
+            console.warn("[Pyodide] File content received but Pyodide not ready yet");
+        }
 
         const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
-        const toolUsed = data.tool_used || ""; // Get the intent/tool used
+        const toolUsed = data.tool_used || "";
+        const originalAnswer = data.answer || "";
+        let answer = originalAnswer;
 
-        let answer = data.answer || "";
+        console.log(`[AI Query] Tool: ${toolUsed}, Answer Length: ${answer.length}`);
 
         if (data.action === "UPDATE_CELL" && data.modified_code) {
+            console.log(`[UPDATE_CELL] Updating cell ${data.cell_id} with ${data.modified_code.length} chars of code`);
             updateLastActiveCell(data.cell_id, data.modified_code);
+            console.log(`[UPDATE_CELL] Cell updated successfully`);
         }
 
         // Title: set once from FIRST user message only.
@@ -2171,28 +2366,66 @@ async function runAIQuery() {
         // Update history
         chatHistory.push({ role: "user", content: prompt, images: base64Images.length > 0 ? base64Images : undefined });
         chatHistory.push({ role: "assistant", content: answer });
+        updateContextMeter();
+
+        // Only match explicit Python code blocks (```python or ```py) — NOT ```sql, ``` plain, etc.
+        const codeMatch = originalAnswer.match(/```(?:python|py)\n([\s\S]*?)```/i);
+
+        // Normalize tool intent check (case-insensitive and handles spaces/underscores)
+        const normalizedTool = toolUsed.toUpperCase().replace(/_/g, " ");
+        const isGenerateIntent = normalizedTool.includes("GENERATE") || normalizedTool.includes("CODE");
+
+        console.log("[AI Query] Code detection:", {
+            hasCodeMatch: !!codeMatch,
+            toolUsed: toolUsed,
+            normalizedTool: normalizedTool,
+            isGenerateIntent: isGenerateIntent,
+            showCode: showCode,
+            codeLength: codeMatch ? codeMatch[1].trim().length : 0
+        });
 
         let codeNode = null;
-        const originalAnswer = answer;
-
-        // Show proposal controls only for generate intents with python code blocks
-        const isGenerateIntent = toolUsed.toUpperCase().includes("GENERATE");
-
-        const codeMatch = originalAnswer.match(/```python([\s\S]*?)```/);
+        // Only stage as a notebook cell if it's a Python code block
         if (codeMatch && isGenerateIntent) {
             const code = codeMatch[1].trim();
+            console.log("[AI Query] Extracted code length:", code.length);
+            console.log("[AI Query] Code preview:", code.substring(0, 100) + "...");
+
             if (!showCode) {
                 answer = stripCodeBlocks(originalAnswer);
                 codeNode = null;
+                console.log("[AI Query] showCode is false, stripping code blocks");
             } else {
+                // Remove THE FIRST code block from the answer text to avoid double display
                 answer = originalAnswer.replace(codeMatch[0], "").trim();
-                codeNode = stageCodeProposalUI(code, prompt);
+
+                // Fallback if the answer only contained the code block
+                if (!answer) {
+                    answer = isGenerateIntent ? "I've generated the following code based on your request:" : "Here is the code I've prepared:";
+                }
+
+                try {
+                    console.log("[AI Query] Calling stageCodeProposalUI...");
+                    codeNode = stageCodeProposalUI(code, prompt);
+                    console.log("[AI Query] Code proposal UI created successfully, codeNode:", !!codeNode);
+                } catch (err) {
+                    console.error("[AI Query] Error staging code proposal:", err);
+                    console.error("[AI Query] Error stack:", err.stack);
+                    // Fallback: put the code back into the answer if proposal UI fails
+                    answer += `\n\n\`\`\`python\n${code}\n\`\`\``;
+                    codeNode = null;
+                }
             }
-        } else if (codeMatch && !isGenerateIntent) {
-            answer = stripCodeBlocks(originalAnswer);
-            codeNode = null;
         } else {
+            console.log("[AI Query] No code block matched or conditions not met");
+            // Standard message: If showCode is false, strip blocks. Otherwise keep them (marked will render them).
             if (!showCode) answer = stripCodeBlocks(answer);
+        }
+
+        // Final safety: ensure answer is never empty if original was not
+        if (!answer.trim() && originalAnswer.trim() && !codeNode) {
+            console.log("[AI Query] Final safety triggered: restoring original answer");
+            answer = originalAnswer;
         }
 
         // Render assistant response into existing assistantBubble
@@ -2212,12 +2445,18 @@ async function runAIQuery() {
         header.appendChild(timeLabel);
 
         const body = document.createElement('div');
-        body.style.fontSize = '0.88rem'; // Shrunk from 0.95rem
+        body.style.fontSize = '0.88rem';
         body.style.lineHeight = '1.5';
-        // Convert markdown to HTML if marked is available, and sanitize
-        if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
-            body.innerHTML = DOMPurify.sanitize(marked.parse(answer || ''));
-        } else {
+
+        try {
+            if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
+                const parseFn = (typeof marked.parse === 'function') ? marked.parse : marked;
+                body.innerHTML = DOMPurify.sanitize(parseFn(answer || ''));
+            } else {
+                body.innerText = answer;
+            }
+        } catch (renderError) {
+            console.error("Error rendering markdown:", renderError);
             body.innerText = answer;
         }
 
@@ -2231,11 +2470,12 @@ async function runAIQuery() {
         clearComposerAttachments();
     } catch (e) {
         clearInterval(timerInt);
+        console.error("[AI Query] Error processing response:", e);
         if (e.name === 'AbortError') {
-            // User cancelled - update the assistant bubble
             assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><strong>Assistant</strong></div><div style="margin-top:8px;color:#94a3b8;font-style:italic;">Response cancelled.</div>`;
         } else {
-            contentArea.innerHTML = `<p style="color:red;padding:15px;">Error: ${e.message}</p>`;
+            // Update the bubble instead of wiping the area
+            assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><strong>Assistant</strong></div><div style="margin-top:8px;color:#ef4444;">Error processing response: ${e.message}</div>`;
         }
     } finally {
         currentAbortController = null;
@@ -3589,7 +3829,19 @@ function renderChatHistory(history) {
             body.style.cssText = "font-size:0.95rem; line-height:1.5;";
 
             if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
-                body.innerHTML = DOMPurify.sanitize(marked.parse(msg.content || ''));
+                let displayContent = msg.content || '';
+                const pairIdx = Array.from(contentArea.querySelectorAll('.ai-msg.assistant')).length;
+                // Replace python code blocks with a clickable pill
+                displayContent = displayContent.replace(/```(?:python|py)\n[\s\S]*?```/gi, (match) => {
+                    return `\n<a href="#" class="notebook-cell-ref" data-pair-index="${pairIdx}" style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;font-size:0.8rem;color:#4f46e5;text-decoration:none;margin:4px 0;">📓 Cell ${pairIdx + 1} — click to jump</a>\n`;
+                });
+                // Collapse other code fences
+                displayContent = displayContent.replace(/```[\s\S]*?```/g, (match) => {
+                    const lang = match.match(/```(\w*)/)?.[1] || '';
+                    const lineCount = match.split('\n').length - 2;
+                    return lang ? `\`[${lang.toUpperCase()} — ${lineCount} lines]\`` : `\`[code — ${lineCount} lines]\``;
+                });
+                body.innerHTML = DOMPurify.sanitize(marked.parse(displayContent), { ADD_ATTR: ['data-pair-index'] });
             } else {
                 body.innerText = msg.content;
             }
@@ -3602,6 +3854,23 @@ function renderChatHistory(history) {
 
     const tray = document.getElementById("ai-response-tray");
     if (tray) tray.scrollTop = tray.scrollHeight;
+
+    // Wire up notebook cell jump links
+    contentArea.querySelectorAll('a.notebook-cell-ref').forEach(link => {
+        link.addEventListener('click', (e) => {
+            e.preventDefault();
+            const pairIdx = parseInt(link.dataset.pairIndex, 10);
+            let target = document.getElementById(`cell-${pairIdx + 1}`);
+            if (!target) {
+                const allCells = document.querySelectorAll('#workspace-view .code-cell');
+                target = allCells[pairIdx] || allCells[allCells.length - 1];
+            }
+            if (target) {
+                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                if (typeof activateCell === 'function') activateCell(target);
+            }
+        });
+    });
 }
 async function uploadNotebook() {
     const input = document.createElement('input');
@@ -4661,6 +4930,18 @@ async function uploadFile() {
 
         if (response.ok) {
             statusDiv.innerHTML = `<div style="color: #10b981; font-weight: 500;">✅ ${result.message}</div>`;
+
+            // If the server returned content (for structured files), inject it into Pyodide
+            if (result.content && pyodide) {
+                try {
+                    const userNs = pyodide.globals.get("user_ns");
+                    userNs.set("dataset_string", result.content);
+                    console.log(`[Pyodide] Injected 'dataset_string' (${result.content.length} chars)`);
+                } catch (err) {
+                    console.error("Failed to inject dataset_string into Pyodide:", err);
+                }
+            }
+
             // Show context-aware suggestion chips for uploaded file
             const fileName = file.name;
             updateSuggestionChips(getSuggestionsForFile(fileName));
@@ -4695,38 +4976,93 @@ async function uploadFile() {
 }
 
 // Fetch settings when the settings drawer is opened
+const PROVIDER_DEFAULTS = {
+    openai:     { model: "gpt-4o",                          hint: "sk-..." },
+    deepseek:   { model: "deepseek-chat",                   hint: "sk-..." },
+    claude:     { model: "claude-3-5-sonnet-20241022",      hint: "sk-ant-..." },
+    gemini:     { model: "gemini-2.0-flash",                hint: "AIza..." },
+    nvidia:     { model: "meta/llama-3.1-70b-instruct",     hint: "nvapi-..." },
+    openrouter: { model: "openai/gpt-4o",                   hint: "sk-or-..." },
+    custom:     { model: "",                                 hint: "No key needed" },
+};
+
+function onProviderChange() {
+    const provider = document.getElementById('llm-provider').value;
+    const defaults = PROVIDER_DEFAULTS[provider] || {};
+    const modelEl = document.getElementById('llm-openai-model');
+    const keyEl   = document.getElementById('llm-api-key');
+    const hintEl  = document.getElementById('llm-key-hint');
+    if (modelEl && defaults.model) modelEl.placeholder = defaults.model;
+    if (keyEl)  keyEl.placeholder = defaults.hint || 'API key';
+    if (hintEl && provider === 'custom') hintEl.textContent = 'No API key needed for local server.';
+    else if (hintEl) hintEl.textContent = 'Saved locally on the server. Never shared.';
+    // Recalculate meter for the new model's context window
+    if (typeof updateContextMeter === 'function') updateContextMeter();
+}
+
 async function loadLLMSettings() {
     try {
         const resp = await fetch('/api/llm/settings');
         const config = await resp.json();
 
-        document.getElementById('llm-provider').value = config.provider || 'custom';
-        document.getElementById('llm-openai-model').value = config.openai_model || 'gpt-4o';
+        const providerEl = document.getElementById('llm-provider');
+        const modelEl    = document.getElementById('llm-openai-model');
+        const keyEl      = document.getElementById('llm-api-key');
+
+        if (providerEl) providerEl.value = config.provider || 'custom';
+        if (modelEl)    modelEl.value    = config.model || config.openai_model || '';
+        if (keyEl)      keyEl.placeholder = config.has_api_key ? '••••••••••••••••••••' : (PROVIDER_DEFAULTS[config.provider]?.hint || 'API key');
+        onProviderChange();
     } catch (e) {
         console.error("Failed to load LLM settings", e);
     }
 }
 
-// Save settings back to the server
 async function saveLLMSettings() {
-    const data = {
-        provider: document.getElementById('llm-provider').value,
-        openai_model: document.getElementById('llm-openai-model').value
-    };
+    const provider = document.getElementById('llm-provider').value;
+    const model    = document.getElementById('llm-openai-model').value.trim();
+    const keyEl    = document.getElementById('llm-api-key');
+    const apiKey   = keyEl ? keyEl.value.trim() : '';
+
+    const data = { provider, model, openai_model: model };
+    if (apiKey) { data.api_key = apiKey; data.openai_api_key = apiKey; }
+
+    const statusEl = document.getElementById('llm-status-msg');
 
     try {
+        // Save first
         const resp = await fetch('/api/llm/settings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        const result = await resp.json();
+        await resp.json();
+        if (keyEl) keyEl.value = '';
 
-        const statusEl = document.getElementById('llm-status-msg');
-        statusEl.innerText = result.message || "Settings Saved!";
-        setTimeout(() => statusEl.innerText = "", 3000);
+        // Then test the connection
+        if (provider !== 'custom') {
+            statusEl.style.color = '#94a3b8';
+            statusEl.innerText = 'Testing connection…';
+            const testResp = await fetch('/api/llm/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Session-ID': SESSION_ID }
+            });
+            const testResult = await testResp.json();
+            if (testResult.status === 'ok') {
+                statusEl.style.color = '#10b981';
+                statusEl.innerText = '✓ ' + testResult.message;
+            } else {
+                statusEl.style.color = '#ef4444';
+                statusEl.innerText = '✗ Invalid key: ' + testResult.message;
+            }
+        } else {
+            statusEl.style.color = '#10b981';
+            statusEl.innerText = 'Settings saved.';
+        }
+        setTimeout(() => { statusEl.innerText = ''; statusEl.style.color = ''; }, 5000);
     } catch (e) {
-        await customAlert("Failed to save settings: " + e.message);
+        statusEl.style.color = '#ef4444';
+        statusEl.innerText = 'Error: ' + e.message;
     }
 }
 
@@ -4868,3 +5204,197 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 });
+
+// ======================================================
+// CONTEXT WINDOW METER
+// ======================================================
+
+// Token context windows per provider/model (in tokens, ~4 chars each)
+// soft = warn at 75%, hard = rollover at 90%
+const CTX_WINDOWS = {
+    // OpenAI
+    "gpt-4o":                    128000,
+    "gpt-4o-mini":               128000,
+    "gpt-4-turbo":               128000,
+    "gpt-3.5-turbo":             16385,
+    // DeepSeek
+    "deepseek-chat":             64000,
+    "deepseek-reasoner":         64000,
+    // Claude
+    "claude-3-5-sonnet-20241022": 200000,
+    "claude-3-5-haiku-20241022":  200000,
+    "claude-3-opus-20240229":     200000,
+    // Gemini
+    "gemini-2.0-flash":          1000000,
+    "gemini-1.5-pro":            2000000,
+    "gemini-1.5-flash":          1000000,
+    // Nvidia NIM (varies by model, conservative default)
+    "meta/llama-3.1-70b-instruct": 128000,
+    "meta/llama-3.1-8b-instruct":  128000,
+    // OpenRouter — inherits from underlying model, use conservative default
+    // Custom server
+    "qwen-vision":               32000,
+};
+const CTX_DEFAULT_TOKENS = 32000; // fallback for unknown models
+
+function getCtxLimits() {
+    // Read current provider/model from the settings if available
+    const providerEl = document.getElementById('llm-provider');
+    const modelEl    = document.getElementById('llm-openai-model');
+    const model = (modelEl ? modelEl.value.trim() : '') || 'gpt-4o';
+
+    // Find best match (exact, then prefix)
+    let tokens = CTX_WINDOWS[model];
+    if (!tokens) {
+        const key = Object.keys(CTX_WINDOWS).find(k => model.startsWith(k) || k.startsWith(model));
+        tokens = key ? CTX_WINDOWS[key] : CTX_DEFAULT_TOKENS;
+    }
+
+    const totalChars = tokens * 4;
+    return {
+        soft: Math.round(totalChars * 0.75),  // warn at 75%
+        hard: Math.round(totalChars * 0.90),  // rollover at 90%
+        totalChars,
+        tokens
+    };
+}
+
+let contextSummaryHandoff = null; // Summary injected at start of new session after rollover
+
+function toggleContextPopover(ringEl) {
+    const pop = document.getElementById('context-meter-popover');
+    if (!pop) return;
+    const isOpen = pop.style.display !== 'none';
+    pop.style.display = isOpen ? 'none' : 'block';
+}
+
+// Close popover when clicking outside
+document.addEventListener('click', (e) => {
+    const wrap = document.getElementById('context-meter-wrap');
+    const pop  = document.getElementById('context-meter-popover');
+    if (pop && wrap && !wrap.contains(e.target)) {
+        pop.style.display = 'none';
+    }
+});
+
+function estimateContextChars() {
+    // Count chars from chatHistory (what gets sent to the LLM)
+    let total = 0;
+    for (const msg of chatHistory) {
+        total += (msg.content || '').length;
+    }
+    return total;
+}
+
+function updateContextMeter() {
+    const chars = estimateContextChars();
+    const msgs = Math.floor(chatHistory.length / 2);
+    const { soft, hard, tokens } = getCtxLimits();
+    const pct = Math.min(chars / hard, 1);
+    const displayPct = Math.round(pct * 100);
+
+    const arc    = document.getElementById('context-meter-arc');
+    const pctEl  = document.getElementById('context-meter-pct');
+    const textEl = document.getElementById('context-meter-text');
+    const newBtn = document.getElementById('context-new-chat-btn');
+    if (!arc) return;
+
+    const circumference = 69.1;
+    arc.style.strokeDashoffset = circumference * (1 - pct);
+
+    let color = '#22c55e';
+    if (pct >= 0.9) color = '#ef4444';
+    else if (pct >= 0.6) color = '#f59e0b';
+    arc.style.stroke = color;
+    pctEl.style.color = color;
+    pctEl.textContent = displayPct > 0 ? displayPct + '%' : '';
+
+    const usedK = Math.round(chars / 4 / 1000);
+    const totalK = Math.round(tokens / 1000);
+
+    if (msgs === 0) {
+        textEl.textContent = 'No context yet';
+    } else if (pct < 0.6) {
+        textEl.textContent = `${msgs} message${msgs !== 1 ? 's' : ''} · ~${usedK}k / ${totalK}k tokens`;
+    } else if (pct < 0.9) {
+        textEl.textContent = `Context filling up · ~${usedK}k / ${totalK}k tokens`;
+    } else {
+        textEl.textContent = `Context almost full · ~${usedK}k / ${totalK}k tokens`;
+    }
+
+    newBtn.style.display = pct >= 0.6 ? 'block' : 'none';
+
+    if (chars >= hard) {
+        triggerContextRollover(true);
+    }
+}
+
+async function triggerContextRollover(auto = false) {
+    if (chatHistory.length === 0) return;
+
+    const newBtn = document.getElementById('context-new-chat-btn');
+    if (newBtn) { newBtn.disabled = true; newBtn.textContent = 'Summarizing…'; }
+
+    try {
+        const resp = await fetch('/api/summarize_context', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Session-ID': SESSION_ID },
+            body: JSON.stringify({ chat_history: chatHistory })
+        });
+        const data = await resp.json();
+        contextSummaryHandoff = data.summary || null;
+    } catch (e) {
+        contextSummaryHandoff = `Previous session: ${Math.floor(chatHistory.length / 2)} exchanges.`;
+    }
+
+    // Start a new chat, injecting the summary as the first assistant message
+    if (typeof createNewChat === 'function') createNewChat();
+    else clearChatUI();
+
+    if (contextSummaryHandoff) {
+        // Inject summary as a system-style note at the top of the new chat
+        const contentArea = document.getElementById('ai-content-area');
+        if (contentArea) {
+            const note = document.createElement('div');
+            note.style.cssText = 'margin:8px 0;padding:10px 14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;font-size:0.8rem;color:#166534;line-height:1.5;';
+            note.innerHTML = `<strong>📋 Context carried over from previous session:</strong><br>${DOMPurify.sanitize(contextSummaryHandoff)}`;
+            contentArea.appendChild(note);
+        }
+        // Pre-seed chatHistory so the LLM knows the summary
+        chatHistory.push({ role: 'assistant', content: `[Session handoff] ${contextSummaryHandoff}` });
+    }
+
+    if (newBtn) { newBtn.disabled = false; newBtn.textContent = 'New session ↗'; }
+    updateContextMeter();
+
+    if (!auto) {
+        // Show toast
+        if (typeof showToast === 'function') showToast('New session started with context summary', 'success');
+    }
+}
+
+// Hook into every AI response to update the meter
+const _origPushHistory = chatHistory.push.bind(chatHistory);
+// We patch via a proxy so any push to chatHistory triggers a meter update
+(function patchChatHistoryForMeter() {
+    const handler = {
+        get(target, prop) {
+            if (prop === 'push') {
+                return function(...args) {
+                    const result = Array.prototype.push.apply(target, args);
+                    updateContextMeter();
+                    return result;
+                };
+            }
+            return typeof target[prop] === 'function'
+                ? target[prop].bind(target)
+                : target[prop];
+        }
+    };
+    // We can't replace chatHistory with a Proxy after it's declared with let,
+    // so instead we call updateContextMeter() explicitly after each query.
+    // The meter is updated via updateContextMeter() calls in runAIQuery.
+})();
+
+// Also update meter when chat is loaded from history
+document.addEventListener('chatLoaded', updateContextMeter);

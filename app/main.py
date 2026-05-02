@@ -19,6 +19,7 @@ from app.orchestrator import IncidentOrchestrator
 from app.session_manager import session_manager
 from app.request_models import QueryRequest
 from app.utils.file_parser import extract_text_from_file, is_structured_file, is_unstructured_file, extract_structured_metadata
+from app.utils.logger import info, error, warning
 
 app = FastAPI(title="InsightEdge AI Notebook")
 
@@ -42,6 +43,41 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 @app.get("/health")
 async def health(): return {"status": "ok"}
 
+@app.post("/api/summarize_context")
+async def summarize_context(req: Request):
+    """Summarizes the current chat history into a compact handoff for a new session."""
+    data = await req.json()
+    history = data.get("chat_history", [])
+    orchestrator = get_orchestrator(req)
+
+    if not history:
+        return {"summary": ""}
+
+    # Build a condensed transcript (last 20 turns max)
+    turns = []
+    for msg in history[-20:]:
+        role = msg.get("role", "")
+        content = msg.get("content", "")[:400]  # cap each message
+        turns.append(f"{role.upper()}: {content}")
+    transcript = "\n".join(turns)
+
+    system_msg = (
+        "You are a context summarizer. Given a chat transcript between a user and a data analyst AI, "
+        "produce a concise handoff summary (max 200 words) covering: "
+        "1) What data/tables were discussed, "
+        "2) Key findings or queries run, "
+        "3) What the user was trying to achieve. "
+        "Write it as a briefing for the AI's next session so it has full context."
+    )
+    user_msg = f"Summarize this chat for handoff:\n\n{transcript}"
+
+    try:
+        result = orchestrator.llm.generate(system_msg, user_msg)
+        summary = result if isinstance(result, str) else result.get("content", "")
+        return {"summary": summary.strip()}
+    except Exception as e:
+        return {"summary": f"Previous session covered: {len(history)//2} exchanges."}
+
 @app.get("/", response_class=HTMLResponse)
 async def get_index():
     with open("static/index.html", "r", encoding="utf-8") as f:
@@ -54,6 +90,8 @@ async def get_index():
 @app.post("/query")
 async def run_ai_query(req: QueryRequest, request: Request):
     orchestrator = get_orchestrator(request)
+    session_id = request.headers.get("X-Session-ID", "default")
+    info(f"Received query request for session {session_id}")
     try:
         # 1. If user attached text/csv files via chat, set them as the active context
         if req.datasets:
@@ -76,8 +114,13 @@ async def run_ai_query(req: QueryRequest, request: Request):
                         content_text = f"Error decoding {filename}: {str(e)}"
                 else:
                     content_text = content_raw
-                    
-                parsed_datasets.append(f"--- File: {filename} ---\n{content_text}")
+                
+                # For structured files (CSV/Excel), don't add file header - just pure CSV data
+                if is_structured_file(filename):
+                    parsed_datasets.append(content_text)
+                else:
+                    # For unstructured files, add file header for context
+                    parsed_datasets.append(f"--- File: {filename} ---\n{content_text}")
                 
             combined_text = "\n\n".join(parsed_datasets)
             
@@ -101,7 +144,7 @@ async def run_ai_query(req: QueryRequest, request: Request):
                         except: pass
                     if valid_chunks:
                         vs.add_chunks(last_filename, valid_chunks, embeddings)
-                        print(f"\u2705 Auto-indexed {last_filename} into RAG ({len(valid_chunks)} chunks)")
+                        print(f"  └─ ✅ Auto-indexed {last_filename} into RAG ({len(valid_chunks)} chunks)")
                 except Exception as e:
                     print(f"Auto-RAG indexing failed: {e}")
             else:
@@ -125,8 +168,14 @@ async def run_ai_query(req: QueryRequest, request: Request):
             is_modification=req.is_modification,
             original_code=req.original_code,
             active_cell_id=req.active_cell_id,
-            use_db_context=req.use_db_context
+            use_db_context=req.use_db_context,
+            use_rag_context=req.use_rag_context
         )
+        
+        # If datasets were attached in this turn, return the text content so JS can inject it into Pyodide
+        if req.datasets:
+            result['active_file_content'] = combined_text
+            info(f"Attached context size: {len(combined_text)} chars")
         
         history_manager.add_to_history(
             req.prompt, 
@@ -135,6 +184,7 @@ async def run_ai_query(req: QueryRequest, request: Request):
             str(req.notebook_cells),
             session_id=request.headers.get("X-Session-ID", "default")
         )
+        info(f"Query Result: Tool={result.get('tool_used')} | Answer Length={len(result.get('answer', ''))}")
         return result
     except Exception as e:
         print(f"ERROR IN /query: {e}")
@@ -266,11 +316,14 @@ async def upload_file(file: UploadFile = File(...), request: Request = None):
     Uploads a file, extracts text, and sets it as context for the user's session Orchestrator.
     """
     orchestrator = get_orchestrator(request)
+    session_id = request.headers.get("X-Session-ID", "default")
+    filename = file.filename
+    info(f"File upload request: {filename} (Session: {session_id})")
+    
     ALLOWED_EXTENSIONS = {
         ".txt", ".pdf", ".docx", ".csv", ".py", ".js", ".json", ".ipynb", 
         ".html", ".css", ".md", ".xlsx", ".xls", ".png", ".jpg", ".jpeg", ".webp"
     }
-    filename = file.filename
     ext = os.path.splitext(filename)[1].lower()
 
     if ext not in ALLOWED_EXTENSIONS:
@@ -287,6 +340,7 @@ async def upload_file(file: UploadFile = File(...), request: Request = None):
             return {
                 "status": "success",
                 "filename": filename,
+                "content": extracted_text,
                 "message": f"Structured file uploaded. AI will use metadata ({metadata.split(chr(10))[1] if chr(10) in metadata else 'summary'}) instead of full data for smart analysis."
             }
         elif is_unstructured_file(filename):
@@ -311,8 +365,33 @@ async def upload_file(file: UploadFile = File(...), request: Request = None):
         
 @app.get("/api/llm/settings")
 async def get_llm_settings(request: Request):
-    """Returns current LLM configuration (reads from the session's orchestrator)"""
-    return get_orchestrator(request).llm.config
+    """Returns current LLM configuration — never exposes the raw API key."""
+    config = get_orchestrator(request).llm.config
+    return {
+        "provider": config.get("provider", "custom"),
+        "model": config.get("model") or config.get("openai_model", ""),
+        "openai_model": config.get("model") or config.get("openai_model", ""),
+        "has_api_key": bool(config.get("api_key") or config.get("openai_api_key", ""))
+    }
+
+@app.post("/api/llm/test")
+async def test_llm_connection(request: Request):
+    """Sends a minimal ping to the configured provider to validate the API key."""
+    orchestrator = get_orchestrator(request)
+    llm = orchestrator.llm
+    provider = llm.config.get("provider", "custom")
+
+    if provider == "custom":
+        return {"status": "ok", "message": "Custom server — no key validation needed."}
+
+    try:
+        result = llm.generate("You are a test assistant.", "Reply with just: ok")
+        text = result if isinstance(result, str) else result.get("content", "")
+        if "error" in text.lower() or "invalid" in text.lower() or "unauthorized" in text.lower():
+            return {"status": "error", "message": text[:200]}
+        return {"status": "ok", "message": f"Connected to {provider.title()} successfully."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)[:200]}
 
 @app.post("/api/llm/settings")
 async def save_llm_settings(req: Request):
@@ -393,9 +472,19 @@ async def execute_sql_bridge(req: Request):
 @app.post("/api/connections/activate")
 async def activate_conn(req: Request):
     data = await req.json()
-    config_manager.set_active(data['name'])
-    get_orchestrator(req).db.refresh_connection()
-    return {"status": "activated"}
+    connection_name = data['name']
+    info(f"Activating database connection: {connection_name}")
+    config_manager.set_active(connection_name)
+    
+    # Refresh the current session's database connection
+    orchestrator = get_orchestrator(req)
+    orchestrator.db.refresh_connection()
+    
+    # Also verify the active connection was set correctly
+    active = config_manager.get_active_name()
+    info(f"Active database after switch: {active}")
+    
+    return {"status": "activated", "active_connection": active}
 
 @app.get("/api/history")
 async def get_hist(req: Request):

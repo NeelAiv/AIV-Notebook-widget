@@ -6,6 +6,7 @@
 
     <link rel="stylesheet" href="/static/style.css">
     <script src="https://cdn.jsdelivr.net/pyodide/v0.29.3/full/pyodide.js"></script>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap%22
         rel=" stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -303,17 +304,27 @@
                 </div>
                 <div class="drawer-content">
                     <div class="conn-form" style="display:flex; margin-top:0;">
-                        <label style="font-size: 0.8rem; margin-bottom: 4px; font-weight: 500;">Active AI
-                            Provider</label>
-                        <select id="llm-provider" onchange="saveLLMSettings()"
+                        <label style="font-size: 0.8rem; margin-bottom: 4px; font-weight: 500;">AI Provider</label>
+                        <select id="llm-provider" onchange="onProviderChange()"
                             style="margin-bottom: 16px; padding: 8px; border-radius: var(--radius-sm); border: 1px solid var(--border);">
                             <option value="custom">Custom Server (Local)</option>
                             <option value="openai">OpenAI</option>
+                            <option value="deepseek">DeepSeek</option>
+                            <option value="claude">Claude (Anthropic)</option>
+                            <option value="gemini">Gemini (Google)</option>
+                            <option value="nvidia">Nvidia NIM</option>
+                            <option value="openrouter">OpenRouter</option>
                         </select>
 
-                        <label style="font-size: 0.8rem; margin-bottom: 4px; font-weight: 500;">OpenAI Model</label>
+                        <label style="font-size: 0.8rem; margin-bottom: 4px; font-weight: 500;">Model</label>
                         <input id="llm-openai-model" type="text" value="gpt-4o"
-                            placeholder="e.g., gpt-4o or gpt-3.5-turbo" style="margin-bottom: 16px; padding: 8px;">
+                            placeholder="e.g., gpt-4o, deepseek-chat, claude-3-5-sonnet-20241022"
+                            style="margin-bottom: 16px; padding: 8px;">
+
+                        <label style="font-size: 0.8rem; margin-bottom: 4px; font-weight: 500;">API Key</label>
+                        <input id="llm-api-key" type="password" placeholder="Paste your API key here..."
+                            style="margin-bottom: 4px; padding: 8px;">
+                        <span id="llm-key-hint" style="font-size:0.72rem;color:#94a3b8;margin-bottom:16px;">Saved locally on the server. Never shared.</span>
 
                         <button onclick="saveLLMSettings()"
                             style="background: var(--accent); color: white; padding: 10px; border: none; border-radius: var(--radius-sm); cursor: pointer;">Save
@@ -496,6 +507,8 @@
             </div>
             <div id="ai-suggestion-chips" class="ai-suggestion-chips"></div>
 
+            <!-- Context Window Meter — inline in toolbar, see ai-toolbar-left below -->
+
             <div class="ai-input-bar">
                 <div class="ai-input-container">
                     <div id="ai-file-chips" class="ai-file-chips" aria-live="polite"></div>
@@ -516,12 +529,43 @@
                                     <path d="M12 5v14" />
                                 </svg>
                             </button>
+
+                            <!-- Context window meter ring -->
+                            <div id="context-meter-wrap" style="position:relative;display:inline-flex;align-items:center;">
+                                <div id="context-meter-ring" style="position:relative;width:26px;height:26px;cursor:pointer;flex-shrink:0;"
+                                    onclick="toggleContextPopover(this)" title="Context usage">
+                                    <svg width="26" height="26" viewBox="0 0 28 28" style="transform:rotate(-90deg);">
+                                        <circle cx="14" cy="14" r="11" fill="none" stroke="#e2e8f0" stroke-width="3"/>
+                                        <circle id="context-meter-arc" cx="14" cy="14" r="11" fill="none"
+                                            stroke="#6366f1" stroke-width="3"
+                                            stroke-dasharray="69.1" stroke-dashoffset="69.1"
+                                            style="transition:stroke-dashoffset 0.4s ease, stroke 0.4s ease;"/>
+                                    </svg>
+                                    <span id="context-meter-pct" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:6.5px;font-weight:700;color:#6366f1;"></span>
+                                </div>
+                                <!-- Popover tooltip -->
+                                <div id="context-meter-popover" style="display:none;position:absolute;bottom:36px;left:0;background:#1e293b;color:#e2e8f0;border-radius:8px;padding:8px 12px;font-size:0.75rem;white-space:nowrap;box-shadow:0 4px 16px rgba(0,0,0,0.3);z-index:999;min-width:200px;">
+                                    <div id="context-meter-text" style="margin-bottom:6px;">No context yet</div>
+                                    <button id="context-new-chat-btn" onclick="triggerContextRollover()" title="Summarize & start fresh"
+                                        style="display:none;font-size:0.7rem;padding:3px 10px;border-radius:8px;border:1px solid #6366f1;background:transparent;color:#818cf8;cursor:pointer;width:100%;">
+                                        New session ↗
+                                    </button>
+                                </div>
+                            </div>
                         </div>
 
                         <div class="ai-toolbar-right">
                             <label class="toggle-switch-db" title="Include Database Schema in AI Context">
                                 <span class="db-toggle-label">Use DB Context</span>
                                 <input type="checkbox" id="ai-use-db-toggle">
+                                <span class="slider round"></span>
+                            </label>
+
+                            <label class="toggle-switch-db" title="Include RAG / Document Knowledge in AI Context">
+                                <span class="db-toggle-label"
+                                    style="font-size:0.75rem; color:var(--text-secondary); font-family:var(--font-primary); white-space:nowrap;">Use
+                                    RAG</span>
+                                <input type="checkbox" id="ai-use-rag-toggle">
                                 <span class="slider round"></span>
                             </label>
 

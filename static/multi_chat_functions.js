@@ -254,6 +254,7 @@ function loadChatToUI(chatId) {
 
   // Re-render messages from chat history
   renderMessagesFromHistory();
+  if (typeof updateContextMeter === 'function') updateContextMeter();
 }
 
 /**
@@ -317,10 +318,27 @@ function renderMessagesFromHistory() {
         const body = document.createElement('div');
         body.style.marginTop = '8px';
 
-        // Render markdown
-        const rawHtml = marked.parse(assistantMsg.content || '');
-        const sanitized = DOMPurify.sanitize(rawHtml);
-        body.innerHTML = sanitized;
+        // Render markdown — strip code blocks that were sent to notebook cells
+        let displayContent = assistantMsg.content || '';
+        let cellIndex = 0; // track which code cell this pair maps to
+
+        // Replace ```python...``` blocks with a clickable pill
+        displayContent = displayContent.replace(/```(?:python|py)\n[\s\S]*?```/gi, (match) => {
+          const lineCount = match.split('\n').length - 2;
+          const pairIdx = messagePairs.length; // current pair index (0-based)
+          return `\n<a href="#" class="notebook-cell-ref" data-pair-index="${pairIdx}" style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;font-size:0.8rem;color:#4f46e5;text-decoration:none;margin:4px 0;">📓 Cell ${pairIdx + 1} — click to jump</a>\n`;
+        });
+
+        // Collapse other code fences (sql, plain, etc.)
+        displayContent = displayContent.replace(/```[\s\S]*?```/g, (match) => {
+          const lang = match.match(/```(\w*)/)?.[1] || '';
+          const lineCount = match.split('\n').length - 2;
+          return lang ? `\`[${lang.toUpperCase()} — ${lineCount} lines]\`` : `\`[code — ${lineCount} lines]\``;
+        });
+
+        const rawHtml = marked.parse(displayContent);
+        // DOMPurify would strip the <a> data attributes, so we inject after sanitize
+        body.innerHTML = DOMPurify.sanitize(rawHtml, { ADD_ATTR: ['data-pair-index'] });
 
         assistantBubble.appendChild(header);
         assistantBubble.appendChild(body);
@@ -345,6 +363,25 @@ function renderMessagesFromHistory() {
   if (tray) {
     tray.scrollTop = tray.scrollHeight;
   }
+
+  // Wire up notebook cell jump links
+  contentArea.querySelectorAll('a.notebook-cell-ref').forEach(link => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      const pairIdx = parseInt(link.dataset.pairIndex, 10);
+      // Try direct cell ID first (cell-1, cell-2, ...)
+      let target = document.getElementById(`cell-${pairIdx + 1}`);
+      // Fallback: Nth .code-cell in #workspace-view
+      if (!target) {
+        const allCells = document.querySelectorAll('#workspace-view .code-cell');
+        target = allCells[pairIdx] || allCells[allCells.length - 1];
+      }
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (typeof activateCell === 'function') activateCell(target);
+      }
+    });
+  });
 }
 
 /**
