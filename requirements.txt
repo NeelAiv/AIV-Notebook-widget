@@ -8,15 +8,18 @@ psycopg2-binary
 python-dotenv
 torch
 nbformat
-
 matplotlib
-requests 
+requests
 pypdf
 python-docx
 python-multipart
 openai
-sqlalchemy 
+sqlalchemy
 pymysql
 chromadb
 pandas
 openpyxl
+
+# Additional DB drivers for JDBC-style connections
+pyodbc          # SQL Server / MSSQL
+cx_Oracle       # Oracle (requires Oracle Instant Client installed separately)

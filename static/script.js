@@ -228,6 +228,8 @@ async function customPrompt(message, defaultValue = '', options = {}) {
 let activeRagIndexToast = null;
 const inflightTableActions = new Set();
 const inflightMemoryActions = new Set();
+// Maps tableName → resolve function to abort the polling loop
+const _indexCancelCallbacks = new Map();
 
 function dismissToast(toast) {
     if (!toast || !toast.parentElement) return;
@@ -254,13 +256,17 @@ async function fetchTablesAndMemoryState() {
     };
 }
 
-async function pollUntilActionComplete(checkDone, { intervalMs = 2500 } = {}) {
-    while (true) {
+async function pollUntilActionComplete(checkDone, { intervalMs = 2500, timeoutMs = 120000 } = {}) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
         const state = await fetchTablesAndMemoryState();
         await Promise.all([loadTables({ preserve: true }), loadVectorMemory({ preserve: true })]);
         if (checkDone(state)) return state;
         await sleep(intervalMs);
     }
+    // Timed out — return last known state without throwing
+    console.warn('[pollUntilActionComplete] Timed out after', timeoutMs, 'ms');
+    return await fetchTablesAndMemoryState();
 }
 
 function showToast(message, type = 'info', duration = 4000) {
@@ -305,10 +311,21 @@ function showToast(message, type = 'info', duration = 4000) {
     ].join(';');
 
     const text = document.createElement('span');
+    text.style.flex = '1';
     text.textContent = message;
 
     toast.appendChild(dot);
     toast.appendChild(text);
+
+    // Always show X button on persistent toasts (duration=0), optional on timed ones
+    if (duration === 0) {
+        const closeBtn = document.createElement('button');
+        closeBtn.textContent = '✕';
+        closeBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:0.8rem;color:#64748b;padding:0 2px;flex-shrink:0;line-height:1;';
+        closeBtn.onclick = () => dismissToast(toast);
+        toast.appendChild(closeBtn);
+    }
+
     container.appendChild(toast);
 
     // Slide in
@@ -3349,9 +3366,13 @@ async function loadTables(options = {}) {
                         </div>
                     </div>
                     <div class="table-card-actions">
-                        <button class="table-action-btn ${isIndexed ? 'secondary' : 'primary'} ${isLoading ? 'is-loading' : ''}" ${isLoading ? 'disabled' : ''} onclick="indexTable('${tbl}', event)">
-                            ${isIndexed ? 'Re-index' : '+ RAG'}
-                        </button>
+                        ${isLoading
+                            ? `<span style="width:16px;height:16px;border:2px solid #e5e7eb;border-top-color:#2563eb;border-radius:50%;display:inline-block;animation:spin 0.7s linear infinite;flex-shrink:0;"></span>
+                               <button class="table-action-btn danger" onclick="cancelTableIndex('${tbl}', event)" style="padding:4px 10px;font-size:0.75rem;">Stop</button>`
+                            : `<button class="table-action-btn ${isIndexed ? 'secondary' : 'primary'}" onclick="indexTable('${tbl}', event)">
+                                ${isIndexed ? 'Re-index' : '+ RAG'}
+                               </button>`
+                        }
                     </div>
                 </div>`;
         }).join('')}</div>`;
@@ -3373,6 +3394,8 @@ async function indexTable(tableName, event) {
     btn.disabled = true;
     btn.classList.add('is-loading');
     inflightTableActions.add(tableName);
+    // Re-render the card immediately to show spinner + Stop button
+    await loadTables({ preserve: true });
 
     try {
         if (activeRagIndexToast) dismissToast(activeRagIndexToast);
@@ -3385,8 +3408,16 @@ async function indexTable(tableName, event) {
         });
         const result = await resp.json();
         if (resp.ok) {
-            // Use the same completion polling path for +RAG and Re-index.
-            await pollUntilActionComplete((state) => state.sources.includes(tableName), { intervalMs: 2500 });
+            // Poll with 2 min timeout — large tables take time
+            // Register a cancel callback so Stop button can abort the poll
+            await new Promise((resolve) => {
+                _indexCancelCallbacks.set(tableName, resolve);
+                pollUntilActionComplete(
+                    (state) => state.sources.includes(tableName),
+                    { intervalMs: 2500, timeoutMs: 120000 }
+                ).then(resolve).catch(resolve);
+            });
+            _indexCancelCallbacks.delete(tableName);
             inflightTableActions.delete(tableName);
             btn.disabled = false;
             btn.classList.remove('is-loading');
@@ -3396,7 +3427,13 @@ async function indexTable(tableName, event) {
                 dismissToast(activeRagIndexToast);
                 activeRagIndexToast = null;
             }
-            showToast(`"${tableName}" indexed into RAG.`, 'success', 3000);
+            // Check if it actually made it in
+            const finalState = await fetchTablesAndMemoryState();
+            if (finalState.sources.includes(tableName)) {
+                showToast(`"${tableName}" indexed into RAG.`, 'success', 3000);
+            } else {
+                showToast(`"${tableName}" indexing is running in background — check back shortly.`, 'info', 5000);
+            }
             return;
         } else {
             throw new Error(result.message || 'Failed');
@@ -3415,6 +3452,24 @@ async function indexTable(tableName, event) {
             await loadTables({ preserve: true });
         }
     }
+}
+
+async function cancelTableIndex(tableName, event) {
+    event.stopPropagation();
+    // Abort the polling loop immediately
+    const cancelCb = _indexCancelCallbacks.get(tableName);
+    if (cancelCb) { cancelCb(); _indexCancelCallbacks.delete(tableName); }
+
+    // Tell the backend to stop embedding
+    await fetch('/api/index_table/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Session-ID': SESSION_ID },
+        body: JSON.stringify({ table_name: tableName })
+    });
+    inflightTableActions.delete(tableName);
+    if (activeRagIndexToast) { dismissToast(activeRagIndexToast); activeRagIndexToast = null; }
+    await loadTables({ preserve: true });
+    showToast(`Indexing of "${tableName}" stopped.`, 'warning', 3000);
 }
 
 async function loadVectorMemory(options = {}) {
@@ -5262,13 +5317,10 @@ function getCtxLimits() {
 let contextSummaryHandoff = null; // Summary injected at start of new session after rollover
 
 function toggleContextPopover(ringEl) {
-    const pop = document.getElementById('context-meter-popover');
-    if (!pop) return;
-    const isOpen = pop.style.display !== 'none';
-    pop.style.display = isOpen ? 'none' : 'block';
+    // No-op — popover is now hover-driven via CSS
 }
 
-// Close popover when clicking outside
+// Close popover when clicking outside (kept as safety net)
 document.addEventListener('click', (e) => {
     const wrap = document.getElementById('context-meter-wrap');
     const pop  = document.getElementById('context-meter-popover');
@@ -5286,8 +5338,24 @@ function estimateContextChars() {
     return total;
 }
 
+function estimateContextBreakdown() {
+    // Conversation chars
+    let convChars = 0;
+    for (const msg of chatHistory) {
+        convChars += (msg.content || '').length;
+    }
+    // File/dataset chars from attached files
+    let fileChars = 0;
+    if (typeof uploadedTextFiles !== 'undefined') {
+        for (const f of uploadedTextFiles) {
+            fileChars += (f.content || '').length;
+        }
+    }
+    return { convChars, fileChars, total: convChars + fileChars };
+}
+
 function updateContextMeter() {
-    const chars = estimateContextChars();
+    const { convChars, fileChars, total: chars } = estimateContextBreakdown();
     const msgs = Math.floor(chatHistory.length / 2);
     const { soft, hard, tokens } = getCtxLimits();
     const pct = Math.min(chars / hard, 1);
@@ -5311,15 +5379,36 @@ function updateContextMeter() {
 
     const usedK = Math.round(chars / 4 / 1000);
     const totalK = Math.round(tokens / 1000);
+    const convK = Math.round(convChars / 4 / 1000);
+    const fileK = Math.round(fileChars / 4 / 1000);
 
     if (msgs === 0) {
         textEl.textContent = 'No context yet';
     } else if (pct < 0.6) {
-        textEl.textContent = `${msgs} message${msgs !== 1 ? 's' : ''} · ~${usedK}k / ${totalK}k tokens`;
+        textEl.textContent = `${displayPct}% · ${msgs} message${msgs !== 1 ? 's' : ''} · ~${usedK}k / ${totalK}k tokens`;
     } else if (pct < 0.9) {
-        textEl.textContent = `Context filling up · ~${usedK}k / ${totalK}k tokens`;
+        textEl.textContent = `${displayPct}% · Context filling up · ~${usedK}k / ${totalK}k tokens`;
     } else {
-        textEl.textContent = `Context almost full · ~${usedK}k / ${totalK}k tokens`;
+        textEl.textContent = `${displayPct}% · Context almost full · ~${usedK}k / ${totalK}k tokens`;
+    }
+
+    // Update popover detail breakdown
+    const popover = document.getElementById('context-meter-popover');
+    if (popover) {
+        const detailId = 'context-meter-detail';
+        let detail = document.getElementById(detailId);
+        if (!detail) {
+            detail = document.createElement('div');
+            detail.id = detailId;
+            detail.style.cssText = 'margin-top:6px;padding-top:6px;border-top:1px solid #e5e7eb;font-size:0.75rem;color:#475569;line-height:1.9;';
+            // Insert before the new-session button
+            const btn = document.getElementById('context-new-chat-btn');
+            popover.insertBefore(detail, btn);
+        }
+        detail.innerHTML =
+            `<div style="display:flex;justify-content:space-between;gap:16px;"><span style="color:#475569;">💬 Conversation</span><span style="color:#0f172a;font-weight:500;">~${convK}k tokens</span></div>` +
+            `<div style="display:flex;justify-content:space-between;gap:16px;"><span style="color:#475569;">📎 Files</span><span style="color:#0f172a;font-weight:500;">~${fileK}k tokens</span></div>` +
+            `<div style="display:flex;justify-content:space-between;gap:16px;margin-top:4px;padding-top:6px;border-top:1px solid #e5e7eb;"><span style="color:#475569;">Total</span><span style="color:#0f172a;font-weight:600;">${displayPct}% of ${totalK}k</span></div>`;
     }
 
     newBtn.style.display = pct >= 0.6 ? 'block' : 'none';

@@ -40,9 +40,20 @@ class DBClient:
                 elif uri.startswith('jdbc:postgresql'):
                     uri = uri.replace('jdbc:postgresql', 'postgresql+psycopg2', 1)
                 elif uri.startswith('jdbc:sqlserver') or uri.startswith('jdbc:mssql'):
-                    uri = 'mssql+pyodbc://' + uri.split('://', 1)[-1]
+                    # jdbc:sqlserver://host:1433;databaseName=mydb
+                    rest = uri.split('://', 1)[-1]
+                    host_part = rest.split(';')[0]
+                    db_name = ''
+                    for seg in rest.split(';'):
+                        if seg.lower().startswith('databasename='):
+                            db_name = seg.split('=', 1)[1]
+                    uri = f"mssql+pyodbc://{host_part}/{db_name}?driver=ODBC+Driver+17+for+SQL+Server"
                 elif uri.startswith('jdbc:oracle'):
-                    uri = uri.replace('jdbc:oracle:thin:@', 'oracle+cx_oracle://', 1)
+                    # jdbc:oracle:thin:@host:1521:SID  or  jdbc:oracle:thin:@//host:1521/service
+                    rest = uri.replace('jdbc:oracle:thin:@//', '').replace('jdbc:oracle:thin:@', '')
+                    uri = f"oracle+cx_oracle://{rest}"
+                elif uri.startswith('jdbc:sqlite'):
+                    uri = uri.replace('jdbc:sqlite', 'sqlite', 1)
                 # Inject credentials if URL is bare (no user:pass in it)
                 user = conf.get('user', '')
                 pw = urllib.parse.quote_plus(conf.get('password', ''))

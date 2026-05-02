@@ -4062,3 +4062,19 @@ button[id$="-btn"] {
         padding: 14px;
     }
 }
+
+/* ======================================================
+   CONTEXT METER POPOVER — hover-driven, light theme
+   ====================================================== */
+#context-meter-wrap:hover #context-meter-popover,
+#context-meter-popover:hover {
+    display: block !important;
+}
+
+#context-meter-popover {
+    transition: opacity 0.15s ease;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
