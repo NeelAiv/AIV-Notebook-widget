@@ -198,23 +198,51 @@ from app.db.vector_store import vector_store
 _cancel_flags: dict = {}
 
 def process_and_index_rag(text_data: str, source_name: str, session_id: str = "default"):
-    """Runs in the background: Chunks text, gets embeddings, saves to ChromaDB"""
+    """Runs in the background: Chunks text into paragraphs with overlap, embeds, saves to ChromaDB."""
     orchestrator = session_manager.get_orchestrator(session_id)
-    chunks = text_data.split('\n')
+
+    # Paragraph-level chunking: split on blank lines, then merge short paragraphs
+    raw_paragraphs = [p.strip() for p in text_data.split('\n\n') if p.strip()]
+
+    # Merge very short paragraphs with the next one (avoids single-sentence chunks)
+    merged = []
+    buffer = ""
+    for para in raw_paragraphs:
+        if len(buffer) + len(para) < 400:
+            buffer = (buffer + " " + para).strip()
+        else:
+            if buffer:
+                merged.append(buffer)
+            buffer = para
+    if buffer:
+        merged.append(buffer)
+
+    # Add overlap: each chunk includes the last sentence of the previous chunk
+    chunks_with_overlap = []
+    for i, chunk in enumerate(merged):
+        if i > 0:
+            # Take last sentence of previous chunk as overlap
+            prev = merged[i - 1]
+            sentences = prev.replace('!', '.').replace('?', '.').split('.')
+            overlap = sentences[-2].strip() + '.' if len(sentences) >= 2 else ''
+            if overlap:
+                chunk = overlap + ' ' + chunk
+        chunks_with_overlap.append(chunk[:600])  # cap each chunk at 600 chars
+
     valid_chunks = []
     embeddings = []
-    
-    for chunk in chunks:
-        if not chunk.strip(): continue
+    for chunk in chunks_with_overlap:
+        if not chunk.strip():
+            continue
         try:
             vec = orchestrator.embedder.get_embedding(chunk)
             valid_chunks.append(chunk)
             embeddings.append(vec)
         except Exception as e:
             print(f"Error embedding chunk: {e}")
-            
+
     vector_store.add_chunks(source_name, valid_chunks, embeddings)
-    print(f"✅ Finished indexing {source_name} for RAG into ChromaDB!")
+    print(f"✅ Finished indexing {source_name} into RAG ({len(valid_chunks)} chunks)")
 
 def process_and_index_table(table_name: str, session_id: str = "default"):
     """Retrieves all rows from a DB table, embeds them, and saves to ChromaDB."""
@@ -345,6 +373,19 @@ async def get_db_tables(req: Request):
     for row in schema:
         tables.add(row['table_name'])
     return {"tables": list(tables)}
+
+@app.get("/api/tables/{table_name}/preview")
+async def get_table_preview(table_name: str, req: Request):
+    """Returns first 5 rows and column names for a table preview on hover."""
+    db = get_orchestrator(req).db
+    if not db.engine:
+        return {"columns": [], "rows": []}
+    try:
+        rows = db.execute_query(f"SELECT * FROM {table_name} LIMIT 5")
+        columns = list(rows[0].keys()) if rows else []
+        return {"columns": columns, "rows": rows}
+    except Exception as e:
+        return {"columns": [], "rows": [], "error": str(e)}
 
 @app.post("/api/upload_file")
 async def upload_file(file: UploadFile = File(...), request: Request = None):

@@ -795,23 +795,68 @@ class IncidentOrchestrator:
                     'code', 'python', 'notebook', 'cell', 'write code', 'show me how'
                 ])
 
+                # Detect specific chart type from user query
+                def _detect_chart_type(q: str) -> str:
+                    q = q.lower()
+                    if any(w in q for w in ['line chart', 'line graph', 'trend', 'over time', 'time series']):
+                        return 'line'
+                    if any(w in q for w in ['scatter', 'correlation', 'vs ', 'versus']):
+                        return 'scatter'
+                    if any(w in q for w in ['pie chart', 'pie', 'proportion', 'share', 'percentage breakdown']):
+                        return 'pie'
+                    if any(w in q for w in ['histogram', 'distribution', 'frequency']):
+                        return 'histogram'
+                    if any(w in q for w in ['area chart', 'area graph', 'stacked area']):
+                        return 'area'
+                    return 'bar'  # default
+
                 if wants_visualization:
                     fixed_query = self._fix_table_names(self._fix_column_query(sql_query, user_query))
+                    chart_type = _detect_chart_type(user_query)
+
+                    if chart_type == 'pie':
+                        chart_code = """    fig = go.Figure(
+        data=go.Pie(labels=df[df.columns[0]], values=df[df.columns[1]] if len(df.columns) > 1 else df[df.columns[0]], hole=0.3)
+    )"""
+                    elif chart_type == 'line':
+                        chart_code = """    x_col = df.columns[0]
+    y_col = df.columns[1] if len(df.columns) > 1 else df.columns[0]
+    fig = go.Figure(
+        data=go.Scatter(x=df[x_col], y=df[y_col], mode='lines+markers', name=y_col, line=dict(color='#2563eb', width=2), marker=dict(size=5))
+    )"""
+                    elif chart_type == 'scatter':
+                        chart_code = """    x_col = df.columns[0]
+    y_col = df.columns[1] if len(df.columns) > 1 else df.columns[0]
+    fig = go.Figure(
+        data=go.Scatter(x=df[x_col], y=df[y_col], mode='markers', name=y_col, marker=dict(color='#2563eb', size=7, opacity=0.7))
+    )"""
+                    elif chart_type == 'histogram':
+                        chart_code = """    x_col = df.columns[0]
+    fig = go.Figure(
+        data=go.Histogram(x=df[x_col], marker_color='#2563eb', opacity=0.8)
+    )"""
+                    elif chart_type == 'area':
+                        chart_code = """    x_col = df.columns[0]
+    y_col = df.columns[1] if len(df.columns) > 1 else df.columns[0]
+    fig = go.Figure(
+        data=go.Scatter(x=df[x_col], y=df[y_col], mode='lines', fill='tozeroy', name=y_col, line=dict(color='#2563eb', width=2))
+    )"""
+                    else:  # bar
+                        chart_code = """    x_col = df.columns[0]
+    y_col = df.columns[1] if len(df.columns) > 1 else df.columns[0]
+    fig = go.Figure(
+        data=go.Bar(x=df[x_col], y=df[y_col], name=y_col, marker_color='#2563eb')
+    )"""
+
                     python_code = f"""# {explanation}
 import plotly.graph_objects as go
 
 df = await query_db('''{fixed_query}''')
 
 if df is not None and not df.empty:
-    x_col = df.columns[0]
-    y_col = df.columns[1] if len(df.columns) > 1 else df.columns[0]
-    fig = go.Figure(
-        data=go.Bar(x=df[x_col], y=df[y_col], name=y_col, marker_color='#667eea')
-    )
+{chart_code}
     fig.update_layout(
         title='{explanation}',
-        xaxis_title=x_col,
-        yaxis_title=y_col,
         template='plotly_white',
         height=400
     )

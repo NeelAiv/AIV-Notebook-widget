@@ -40,6 +40,7 @@ let chatHistory = [];
 let messagePairs = []; // Tracks {userBubble, assistantBubble, prompt} for editing
 let editingMessageIndex = null; // Index of message currently being edited inline (null = none)
 let cellCount = 0;
+let executionCounter = 0; // global execution order counter like Jupyter [1], [2], ...
 let lastDataForChart = null;
 let pyodide = null; // Global Pyodide instance
 let showCode = true; // Global toggle: set to false to hide code blocks in AI responses
@@ -1416,8 +1417,46 @@ async function runCode(id) {
         // Show error-specific suggestion chips
         updateSuggestionChips(getSuggestionsForCode(code, true, false, false));
     } finally {
-        btn.innerText = "▶";
+        executionCounter++;
+        const execNum = executionCounter;
+        btn.textContent = `[${execNum}]`;
+        btn.style.fontSize = '0.65rem';
+        btn.style.fontFamily = 'monospace';
+        btn.style.color = '#94a3b8';
+        btn.title = `Last run: [${execNum}] — click to run again`;
+        // Restore ▶ on hover
+        btn.onmouseenter = () => { btn.textContent = '▶'; btn.style.fontSize = ''; btn.style.color = ''; };
+        btn.onmouseleave = () => { btn.textContent = `[${execNum}]`; btn.style.fontSize = '0.65rem'; btn.style.color = '#94a3b8'; };
     }
+}
+
+async function runAllCells() {
+    const cells = document.querySelectorAll('#workspace-view .code-cell');
+    if (cells.length === 0) { showToast('No cells to run.', 'info', 2000); return; }
+
+    showToast(`Running ${cells.length} cell${cells.length > 1 ? 's' : ''}...`, 'info', 0);
+    let ran = 0;
+
+    for (const cell of cells) {
+        // Skip text/markdown cells
+        if (cell.classList.contains('text-cell')) continue;
+        const idMatch = cell.id.match(/cell-(\d+)/);
+        if (!idMatch) continue;
+        const id = parseInt(idMatch[1]);
+        try {
+            await runCode(id);
+            ran++;
+        } catch (e) {
+            showToast(`Cell ${id} errored — stopping.`, 'error', 4000);
+            break;
+        }
+    }
+
+    // Dismiss the persistent "Running..." toast
+    document.querySelectorAll('#toast-container > div').forEach(t => {
+        if (t.textContent.includes('Running')) dismissToast(t);
+    });
+    showToast(`✓ Ran ${ran} cell${ran !== 1 ? 's' : ''}.`, 'success', 3000);
 }
 
 async function debugCellError(id) {
@@ -1456,7 +1495,7 @@ function addCodeCell(button) {
             </div>
 
             <div class="cell-run-part">
-                <button class="play-btn" onclick="event.stopPropagation(); runCode(${cellCount})" id="btn-${cellCount}">▶</button>
+                <button class="play-btn" onclick="event.stopPropagation(); runCode(${cellCount})" id="btn-${cellCount}" title="Run cell">▶</button>
             </div>
             
             <div class="cell-content-part">
@@ -3355,7 +3394,7 @@ async function loadTables(options = {}) {
             const isIndexed = indexedSources.has(tbl);
             const isLoading = inflightTableActions.has(tbl);
             return `
-                <div class="table-card ${isIndexed ? 'indexed' : ''}">
+                <div class="table-card ${isIndexed ? 'indexed' : ''}" onmouseenter="showTablePreview(event, '${tbl}')" onmouseleave="hideTablePreview()">
                     <div class="table-card-main">
                         <div class="table-card-icon">${isIndexed ? 'AI' : 'DB'}</div>
                         <div class="table-card-meta">
@@ -3452,6 +3491,85 @@ async function indexTable(tableName, event) {
             await loadTables({ preserve: true });
         }
     }
+}
+
+// ── Table preview on hover ──────────────────────────────────────────────────
+let _previewEl = null;
+let _previewTimer = null;
+const _previewCache = {};
+
+async function showTablePreview(event, tableName) {
+    clearTimeout(_previewTimer);
+    _previewTimer = setTimeout(async () => {
+        // Fetch preview (cached)
+        if (!_previewCache[tableName]) {
+            try {
+                const resp = await fetch(`/api/tables/${encodeURIComponent(tableName)}/preview`,
+                    { headers: { 'X-Session-ID': SESSION_ID } });
+                _previewCache[tableName] = await resp.json();
+            } catch (e) { return; }
+        }
+        const data = _previewCache[tableName];
+        if (!data.columns || data.columns.length === 0) return;
+
+        // Build preview popup
+        hideTablePreview();
+        const pop = document.createElement('div');
+        pop.id = 'table-preview-popup';
+        pop.style.cssText = [
+            'position:fixed', 'z-index:9999',
+            'background:#fff', 'border:1px solid #e5e7eb',
+            'border-radius:10px', 'box-shadow:0 8px 24px rgba(15,23,42,0.12)',
+            'padding:10px', 'font-size:0.75rem', 'max-width:420px',
+            'pointer-events:none'
+        ].join(';');
+
+        const title = document.createElement('div');
+        title.style.cssText = 'font-weight:600;color:#0f172a;margin-bottom:6px;font-size:0.8rem;';
+        title.textContent = `${tableName} — first 5 rows`;
+        pop.appendChild(title);
+
+        const table = document.createElement('table');
+        table.style.cssText = 'border-collapse:collapse;width:100%;';
+        const thead = document.createElement('thead');
+        const hrow = document.createElement('tr');
+        data.columns.forEach(col => {
+            const th = document.createElement('th');
+            th.textContent = col;
+            th.style.cssText = 'padding:4px 8px;background:#f3f4f6;color:#374151;font-weight:600;border-bottom:1px solid #e5e7eb;white-space:nowrap;text-align:left;';
+            hrow.appendChild(th);
+        });
+        thead.appendChild(hrow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        (data.rows || []).forEach(row => {
+            const tr = document.createElement('tr');
+            data.columns.forEach(col => {
+                const td = document.createElement('td');
+                const val = row[col];
+                td.textContent = val === null || val === undefined ? '—' : String(val).substring(0, 30);
+                td.style.cssText = 'padding:3px 8px;border-bottom:1px solid #f1f5f9;color:#475569;white-space:nowrap;';
+                tr.appendChild(td);
+            });
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        pop.appendChild(table);
+        document.body.appendChild(pop);
+        _previewEl = pop;
+
+        // Position near cursor
+        const rect = event.currentTarget.getBoundingClientRect();
+        const top = rect.top - pop.offsetHeight - 8;
+        pop.style.left = Math.min(rect.left, window.innerWidth - 440) + 'px';
+        pop.style.top = (top < 8 ? rect.bottom + 8 : top) + 'px';
+    }, 400); // 400ms delay before showing
+}
+
+function hideTablePreview() {
+    clearTimeout(_previewTimer);
+    if (_previewEl) { _previewEl.remove(); _previewEl = null; }
 }
 
 async function cancelTableIndex(tableName, event) {

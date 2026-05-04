@@ -98,14 +98,21 @@
 
                 <button class="notebook-btn" onclick="addCodeCell()"
                     style="display: inline-flex; align-items: center; gap: 6px; background: transparent; border: none; cursor: pointer;">
-
                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none"
                         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M5 12h14" />
-                        <path d="M12 5v14" />
+                        <path d="M5 12h14" /><path d="M12 5v14" />
                     </svg>
+                    + Code
+                </button>
 
-                    Code
+                <button class="notebook-btn" onclick="runAllCells()" title="Run all cells in order"
+                    style="display: inline-flex; align-items: center; gap: 6px; background: transparent; border: none; cursor: pointer;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polygon points="5 3 19 12 5 21 5 3"/>
+                        <line x1="19" y1="3" x2="19" y2="21"/>
+                    </svg>
+                    Run All
                 </button>
 
                 <button class="notebook-btn" onclick="window.location.reload()"
