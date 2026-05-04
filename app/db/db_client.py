@@ -1,7 +1,12 @@
 import json
+import time
 import urllib.parse
 from sqlalchemy import create_engine, text, inspect
 from app.db.config_manager import get_all_configs, get_active_name
+
+# Simple in-memory query cache: key → (result, timestamp)
+_query_cache: dict = {}
+_CACHE_TTL_SECONDS = 60  # cache SELECT results for 60 seconds
 
 class DBClient:
     def __init__(self):
@@ -100,14 +105,25 @@ class DBClient:
     def execute_query(self, query, params=None):
         if not self.engine:
             self.refresh_connection()
-        if not self.engine: 
+        if not self.engine:
             return []
-        
-        # Log which database is being queried
+
         active_name = get_active_name()
         print(f"📊 Executing query on database: {active_name}")
-        
+
         is_select = query.strip().upper().startswith("SELECT")
+
+        # Cache SELECT queries for TTL seconds
+        if is_select and not params:
+            cache_key = f"{active_name}::{query.strip()}"
+            cached = _query_cache.get(cache_key)
+            if cached:
+                result, ts = cached
+                if time.time() - ts < _CACHE_TTL_SECONDS:
+                    print(f"  ↳ Cache hit ({int(time.time()-ts)}s old)")
+                    return result
+                else:
+                    del _query_cache[cache_key]
         
         try:
             # SQLAlchemy text() requires dicts/kwargs. 
@@ -132,9 +148,23 @@ class DBClient:
                 with self.engine.connect() as conn:
                     result = conn.execute(text(query), params or {})
                     if is_select:
-                        return [dict(mapping) for mapping in result.mappings().all()]
+                        rows = [dict(mapping) for mapping in result.mappings().all()]
+                        # Store in cache
+                        if not params:
+                            cache_key = f"{active_name}::{query.strip()}"
+                            _query_cache[cache_key] = (rows, time.time())
+                            # Evict old entries if cache grows large
+                            if len(_query_cache) > 200:
+                                oldest = sorted(_query_cache.items(), key=lambda x: x[1][1])[:50]
+                                for k, _ in oldest:
+                                    del _query_cache[k]
+                        return rows
                     else:
                         conn.commit()
+                        # Invalidate cache for this DB on writes
+                        keys_to_del = [k for k in _query_cache if k.startswith(f"{active_name}::")]
+                        for k in keys_to_del:
+                            del _query_cache[k]
                         return []
         except Exception as e:
             print(f"❌ SQL Error: {e}")
