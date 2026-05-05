@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
 from fastapi import UploadFile, File
 import uvicorn
 import sys
@@ -191,6 +191,82 @@ async def run_ai_query(req: QueryRequest, request: Request):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
+
+@app.post("/query/stream")
+async def run_ai_query_stream(req: QueryRequest, request: Request):
+    """Streaming version of /query — returns SSE (text/event-stream)."""
+    orchestrator = get_orchestrator(request)
+    session_id = request.headers.get("X-Session-ID", "default")
+    info(f"Received streaming query for session {session_id}")
+
+    # Handle file datasets (same as /query)
+    combined_text = ""
+    if req.datasets:
+        import base64
+        from app.utils.file_parser import extract_text_from_file, is_structured_file, is_unstructured_file, extract_structured_metadata
+        parsed = []
+        last_filename = ''
+        last_file_bytes = None
+        for d in req.datasets:
+            filename = d.get('filename', '')
+            content_raw = d.get('content', '')
+            last_filename = filename
+            if content_raw.startswith('data:'):
+                try:
+                    b64_data = content_raw.split(',', 1)[1]
+                    file_bytes = base64.b64decode(b64_data)
+                    last_file_bytes = file_bytes
+                    content_text = extract_text_from_file(file_bytes, filename)
+                except Exception as e:
+                    content_text = f"Error decoding {filename}: {str(e)}"
+            else:
+                content_text = content_raw
+            parsed.append(content_text)
+        combined_text = "\n\n".join(parsed)
+        if is_structured_file(last_filename) and last_file_bytes:
+            metadata = extract_structured_metadata(last_file_bytes, last_filename)
+            orchestrator.set_file_context(combined_text, metadata=metadata, file_type='structured', filename=last_filename)
+        elif is_unstructured_file(last_filename):
+            orchestrator.set_file_context(combined_text, file_type='unstructured', filename=last_filename)
+        else:
+            orchestrator.set_file_context(combined_text, filename=last_filename)
+
+    active_images = list(req.images) if req.images else []
+    if not active_images and req.chat_history:
+        for msg in reversed(req.chat_history):
+            if isinstance(msg, dict) and msg.get("images"):
+                active_images = msg["images"]
+                break
+
+    def event_generator():
+        try:
+            for event in orchestrator.route_and_execute_stream(
+                req.prompt,
+                req.notebook_cells,
+                req.variables,
+                req.chat_history,
+                images=active_images,
+                is_modification=req.is_modification,
+                original_code=req.original_code,
+                active_cell_id=req.active_cell_id,
+                use_db_context=req.use_db_context,
+                use_rag_context=req.use_rag_context,
+            ):
+                yield event
+        except Exception as e:
+            import json, traceback
+            traceback.print_exc()
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'tool_used': 'Error', 'answer': str(e), 'trace': '', 'raw_data': []})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # disable nginx buffering
+        }
+    )
 
 from app.db.vector_store import vector_store
 
@@ -448,7 +524,8 @@ async def get_llm_settings(request: Request):
         "provider": config.get("provider", "custom"),
         "model": config.get("model") or config.get("openai_model", ""),
         "openai_model": config.get("model") or config.get("openai_model", ""),
-        "has_api_key": bool(config.get("api_key") or config.get("openai_api_key", ""))
+        "has_api_key": bool(config.get("api_key") or config.get("openai_api_key", "")),
+        "custom_server_url": config.get("custom_server_url", "")
     }
 
 @app.post("/api/llm/test")
