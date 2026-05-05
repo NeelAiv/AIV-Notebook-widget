@@ -510,6 +510,8 @@ const ICON_ACCEPT_CHECK = `<svg xmlns="http://www.w3.org/2000/svg" width="24" he
 const ICON_ACCEPT_PLAY = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"/></svg>`;
 const ICON_CANCEL_X = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`;
 const ICON_REFRESH = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-rotate-cw"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>`;
+const ICON_COPY = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`;
+const ICON_COPY_CHECK = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>`;
 // --- 1. UTILITIES ---
 function autoResize(textarea) {
     textarea.style.height = 'auto';
@@ -761,7 +763,44 @@ function buildDiffView(oldCode, newCode) {
 
 function setProposalActionsResolved(proposal, statusText) {
     if (!proposal || !proposal.actionsEl) return;
-    proposal.actionsEl.innerHTML = `<span class="ai-proposal-status">${statusText}</span>`;
+
+    const cellId = proposal.cellId || proposal.newCellId;
+    const cellNum = cellId ? cellId.replace('cell-', '') : null;
+    const cellLabel = cellNum ? `Cell ${cellNum}` : 'notebook cell';
+
+    // Build status + jump pill
+    const pill = cellId
+        ? `<a href="#" class="notebook-cell-ref" data-cell-id="${cellId}" data-pair-index="0"
+              style="display:inline-flex;align-items:center;gap:5px;padding:3px 9px;
+                     background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;
+                     font-size:0.75rem;color:#4f46e5;text-decoration:none;margin-left:8px;">
+              📓 ${cellLabel} — jump
+           </a>`
+        : '';
+
+    proposal.actionsEl.innerHTML = `<span class="ai-proposal-status">${statusText}</span>${pill}`;
+
+    // Wire up the pill click
+    const link = proposal.actionsEl.querySelector('a.notebook-cell-ref');
+    if (link) {
+        link.addEventListener('click', (e) => {
+            e.preventDefault();
+            const target = document.getElementById(cellId);
+            if (target) {
+                const outDiv = document.getElementById(`out-${cellNum}`);
+                const scrollTarget = (outDiv && outDiv.children.length > 0) ? outDiv : target;
+                const workspaceView = document.getElementById('workspace-view');
+                if (workspaceView) workspaceView.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                setTimeout(() => {
+                    scrollTarget.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    if (typeof activateCell === 'function') activateCell(target);
+                    target.style.transition = 'box-shadow 0.3s';
+                    target.style.boxShadow = '0 0 0 3px #c7d2fe';
+                    setTimeout(() => { target.style.boxShadow = ''; }, 1200);
+                }, 150);
+            }
+        });
+    }
 }
 
 function clearPendingCodeProposal(options = {}) {
@@ -1241,6 +1280,7 @@ async function runCode(id) {
     const btn = document.getElementById(`btn-${id}`);
     if (!pyodide) { outDiv.innerText = "⚠️ Kernel loading..."; return; }
 
+    const _cellStartTime = Date.now();
     btn.innerHTML = ICON_LOADER;
     outDiv.innerHTML = ""; // Clear output
 
@@ -1404,6 +1444,35 @@ async function runCode(id) {
         const hasDF = !!(outDiv.querySelector('table') || outDiv.querySelector('div[style*="overflow"]'));
         updateSuggestionChips(getSuggestionsForCode(code, false, hasPlot, hasDF));
 
+        // Update variable inspector
+        try {
+            const varInfo = await pyodide.runPythonAsync(`
+import json
+_vars = {}
+for _k, _v in list(user_ns.items()):
+    if not _k.startswith('_'):
+        _t = type(_v).__name__
+        if _t == 'DataFrame':
+            _vars[_k] = 'DataFrame ' + str(_v.shape[0]) + 'x' + str(_v.shape[1])
+        elif _t in ('int', 'float', 'str', 'bool'):
+            _vars[_k] = _t + ': ' + str(_v)[:30]
+        elif _t == 'Figure':
+            _vars[_k] = 'Plotly Figure'
+        else:
+            _vars[_k] = _t
+json.dumps(_vars)
+`, { globals: pyodide.globals.get("user_ns") });
+            const vars = JSON.parse(varInfo);
+            const inspector = document.getElementById('var-inspector');
+            const content = document.getElementById('var-inspector-content');
+            if (inspector && content && Object.keys(vars).length > 0) {
+                inspector.style.display = 'block';
+                content.innerHTML = Object.entries(vars)
+                    .map(([k, v]) => `<div style="display:flex;gap:8px;padding:1px 0;"><span style="color:#2563eb;min-width:80px;">${k}</span><span style="color:#64748b;">${v}</span></div>`)
+                    .join('');
+            }
+        } catch(e) { /* variable inspector is non-critical */ }
+
     } catch (e) {
         flushOutput();
         const errorStack = e.message || String(e);
@@ -1427,6 +1496,43 @@ async function runCode(id) {
         // Restore ▶ on hover
         btn.onmouseenter = () => { btn.textContent = '▶'; btn.style.fontSize = ''; btn.style.color = ''; };
         btn.onmouseleave = () => { btn.textContent = `[${execNum}]`; btn.style.fontSize = '0.65rem'; btn.style.color = '#94a3b8'; };
+
+        // Cell timing
+        const elapsed = ((Date.now() - _cellStartTime) / 1000).toFixed(1);
+        btn.dataset.elapsed = elapsed + 's';
+        btn.title = `Last run: [${execNum}] — ${elapsed}s`;
+
+        // Show timing below output — only if there's actual output content
+        const outDivFinal = document.getElementById(`out-${id}`);
+        if (outDivFinal) {
+            const existingTimer = outDivFinal.querySelector('.cell-timing');
+            if (existingTimer) existingTimer.remove();
+            // Only add timing if there's real output (not empty cell)
+            const hasRealOutput = Array.from(outDivFinal.children).some(c => !c.classList.contains('cell-timing'));
+            if (hasRealOutput || outDivFinal.textContent.trim()) {
+                const timer = document.createElement('div');
+                timer.className = 'cell-timing';
+                timer.style.cssText = 'font-size:0.68rem;color:#94a3b8;padding:2px 4px;text-align:right;';
+                timer.textContent = `Executed in ${elapsed}s`;
+                outDivFinal.appendChild(timer);
+            }
+
+            // Add collapse toggle only if output has real content (not just the timing label)
+            const wrapper = outDivFinal.parentElement;
+            const realChildren = Array.from(outDivFinal.children).filter(c => !c.classList.contains('cell-timing'));
+            if (wrapper && wrapper.classList.contains('cell-output-wrapper') && !wrapper.querySelector('.output-collapse-btn') && realChildren.length > 0) {
+                const collapseBtn = document.createElement('button');
+                collapseBtn.className = 'output-collapse-btn';
+                collapseBtn.style.cssText = 'display:block;width:100%;text-align:left;padding:2px 8px;background:#f8fafc;border:none;border-top:1px solid #e5e7eb;font-size:0.72rem;color:#64748b;cursor:pointer;';
+                collapseBtn.textContent = '▲ Collapse output';
+                collapseBtn.onclick = () => {
+                    const collapsed = outDivFinal.style.display === 'none';
+                    outDivFinal.style.display = collapsed ? '' : 'none';
+                    collapseBtn.textContent = collapsed ? '▲ Collapse output' : '▼ Show output';
+                };
+                wrapper.appendChild(collapseBtn);
+            }
+        }
     }
 }
 
@@ -1466,12 +1572,21 @@ async function debugCellError(id) {
     const outDiv = document.getElementById(`out-${id}`);
     const errorTrace = outDiv.getAttribute("data-last-error") || "Unknown error";
 
-    // Shorten the prompt request
-    const prompt = `Fix the error in this code:\n\nError:\n${errorTrace}`;
+    // Include the actual code that errored for better context
+    let codeContent = '';
+    if (codeEditor.nextSibling?.CodeMirror) {
+        codeContent = codeEditor.nextSibling.CodeMirror.getValue();
+    } else {
+        codeContent = codeEditor.value || '';
+    }
+    const prompt = `Fix the error in this code:\n\nCode:\n\`\`\`python\n${codeContent}\n\`\`\`\n\nError:\n${errorTrace}\n\nPlease fix the code so it runs without errors.`;
 
-    // Activate the cell so AI knows context
+    // Activate the cell AND set lastActiveCellId so the fix goes back to this cell
     const cellEl = document.getElementById(`cell-${id}`);
-    if (cellEl) activateCell(cellEl);
+    if (cellEl) {
+        activateCell(cellEl);
+        lastActiveCellId = id; // ensure modification targets this cell
+    }
 
     // Fill the AI prompt and automatically submit
     const aiInput = document.getElementById("prompt-input");
@@ -1501,7 +1616,9 @@ function addCodeCell(button) {
             <div class="cell-content-part">
                 <div class="code-placeholder">Start coding or <u onclick="event.stopPropagation(); focusAI()">generate</u> with AI.</div>
                 <textarea class="code-editor" oninput="autoResize(this); markDirty()" rows="1"></textarea>
-                <div class="cell-output" id="out-${cellCount}"></div>
+                <div class="cell-output-wrapper">
+                    <div class="cell-output" id="out-${cellCount}"></div>
+                </div>
             </div>
         </div>`;
 
@@ -1598,7 +1715,8 @@ function updateSuggestionChips(chips) {
             if (input) {
                 input.value = chip.prompt;
                 input.style.height = "auto";
-                input.style.height = Math.min(input.scrollHeight, 140) + "px";
+                input.style.height = Math.min(input.scrollHeight, 120) + "px";
+                input.style.overflowY = input.scrollHeight > 120 ? "auto" : "hidden";
             }
             // Clear chips and auto-send
             container.innerHTML = "";
@@ -1661,32 +1779,46 @@ function getSuggestionsForFile(fileName) {
 function getSuggestionsForCode(code, hasError, hasPlot, hasDataFrame) {
     const codeLower = code.toLowerCase();
 
+    // Extract table name and query from the executed code for context-aware prompts
+    const queryMatch = code.match(/query_db\s*\(\s*['"]{1,3}([\s\S]*?)['"]{1,3}\s*\)/);
+    const rawQuery = queryMatch ? queryMatch[1].trim() : '';
+    const tableMatch = rawQuery.match(/\bFROM\s+([`"']?\w+[`"']?)/i);
+    const tableName = tableMatch ? tableMatch[1].replace(/[`"']/g, '') : '';
+    const tableRef = tableName ? ` from the ${tableName} table` : '';
+
     // Error case — highest priority
     if (hasError) {
         return [
-            { label: "Fix this error", prompt: "Fix the error in the code I just ran.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 L11 13"></path><path d="M14.5 2.5a9 9 0 1 1-12.7 12.7L11 13"></path></svg>' },
-            { label: "Explain what went wrong", prompt: "Explain why my code produced an error and how to fix it.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 2-3 4"></path><line x1="12" y1="17" x2="12" y2="17"></line></svg>' },
-            { label: "Try alternative approach", prompt: "Suggest an alternative approach to achieve the same result without the error.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="10" rx="2"></rect><path d="M7 7v-2a5 5 0 0 1 10 0v2"></path></svg>' },
+            { label: "Fix this error", prompt: "Fix the error in the code I just ran.", icon: "🔧" },
+            { label: "Explain what went wrong", prompt: "Explain why my code produced an error and how to fix it.", icon: "❓" },
+            { label: "Try alternative approach", prompt: "Suggest an alternative approach to achieve the same result without the error.", icon: "🔄" },
         ];
     }
 
     // Plot/visualization case
-    if (hasPlot || codeLower.includes("plt.") || codeLower.includes("matplotlib") || codeLower.includes(".plot(")) {
+    if (hasPlot || codeLower.includes('go.figure') || codeLower.includes('go.bar') || codeLower.includes('go.scatter') || codeLower.includes('go.pie')) {
         return [
-            { label: "Save this plot", prompt: "Save the plot I just generated as a PNG file.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h11l5 5v9a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline></svg>' },
-            { label: "Change color scheme", prompt: "Change the color scheme of my plot to make it more visually appealing.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a10 10 0 0 1 10 10"></path></svg>' },
-            { label: "Add title & labels", prompt: "Add a proper title, axis labels, and legend to my plot.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"></path></svg>' },
-            { label: "Explain this visualization", prompt: "Explain what this visualization shows about the data.", icon: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"></path><path d="M18 13v6"></path><path d="M13 8v11"></path><path d="M8 16v3"></path></svg>' },
+            { label: "Change to line chart", prompt: `Change the chart I just created${tableRef} to a line chart instead.`, icon: "📈" },
+            { label: "Change to pie chart", prompt: `Change the chart I just created${tableRef} to a pie chart showing proportions.`, icon: "🥧" },
+            { label: "Top 10 only", prompt: `Modify the chart to show only the top 10 results${tableRef}.`, icon: "🏆" },
+            { label: "Color by category", prompt: `Color-code the chart${tableRef} by category or group.`, icon: "🎨" },
         ];
     }
 
-    // DataFrame/pandas case
-    if (hasDataFrame || codeLower.includes("import pandas") || codeLower.includes("pd.read") || codeLower.includes("dataframe")) {
+    // DataFrame / query result case
+    if (hasDataFrame || codeLower.includes('query_db') || codeLower.includes('dataframe')) {
+        if (tableName) {
+            return [
+                { label: "Visualize this data", prompt: `Create a bar chart for the data${tableRef}.`, icon: "📊" },
+                { label: "Top 10 results", prompt: `Show me the top 10 results${tableRef} ordered by the main numeric column.`, icon: "🏆" },
+                { label: "Group by category", prompt: `Group the data${tableRef} by category and show counts or totals.`, icon: "📋" },
+                { label: "Summary statistics", prompt: `Show summary statistics (min, max, avg, count) for the numeric columns${tableRef}.`, icon: "📉" },
+            ];
+        }
         return [
-            { label: "Show column types", prompt: "Show the data types and info for all columns in my DataFrame.", icon: "📋" },
-            { label: "Handle missing values", prompt: "Check for and handle any missing values in my DataFrame.", icon: "🔧" },
-            { label: "Plot distribution", prompt: "Plot the distribution of numerical columns in my DataFrame.", icon: "📈" },
-            { label: "Generate summary stats", prompt: "Generate descriptive statistics for my DataFrame.", icon: "📊" },
+            { label: "Visualize this", prompt: "Create a chart for the data I just retrieved.", icon: "📊" },
+            { label: "Summary statistics", prompt: "Show summary statistics for the data I just retrieved.", icon: "📉" },
+            { label: "Filter the results", prompt: "Help me filter or narrow down the results I just got.", icon: "🔍" },
         ];
     }
 
@@ -1716,6 +1848,17 @@ function setAILoading(isLoading) {
         sendIcon.style.display = "block";
         stopIcon.style.display = "none";
         sendBtn.setAttribute("aria-label", "Send");
+    }
+
+    // Show/hide typing indicator in chat
+    // Only show typing dots if there's no assistant bubble already being streamed into
+    const tray = document.getElementById('ai-content-area');
+    const existingTyping = document.getElementById('ai-typing-indicator');
+    if (isLoading) {
+        // Don't add typing indicator — streaming builds the bubble directly
+        // The pulse-icon in the placeholder bubble already shows loading state
+    } else {
+        if (existingTyping) existingTyping.remove();
     }
 }
 
@@ -1825,8 +1968,15 @@ function editMessage(messageIndex) {
         editingMessageIndex = null;
 
         // ── 2. Remove all messages AFTER this one from DOM ─────────────────
+        // Also collect cell IDs that were generated from those messages
+        const cellIdsToRemove = [];
         for (let i = messageIndex + 1; i < messagePairs.length; i++) {
             const pair = messagePairs[i];
+            // Collect any stored cell IDs from the assistant message
+            const histIdx = i * 2 + 1; // assistant message index in chatHistory
+            if (chatHistory[histIdx] && chatHistory[histIdx]._cellId) {
+                cellIdsToRemove.push(chatHistory[histIdx]._cellId);
+            }
             if (pair.userBubble?.parentNode) pair.userBubble.remove();
             if (pair.assistantBubble?.parentNode) pair.assistantBubble.remove();
         }
@@ -1835,6 +1985,40 @@ function editMessage(messageIndex) {
         if (messagePair.assistantBubble?.parentNode) {
             messagePair.assistantBubble.remove();
             messagePair.assistantBubble = null;
+        }
+        // Also collect cell ID from the current pair's assistant message
+        const currentAssistHistIdx = messageIndex * 2 + 1;
+        if (chatHistory[currentAssistHistIdx] && chatHistory[currentAssistHistIdx]._cellId) {
+            cellIdsToRemove.push(chatHistory[currentAssistHistIdx]._cellId);
+        }
+
+        // ── 2b. Remove the notebook cells that came from deleted messages ──
+        if (cellIdsToRemove.length > 0) {
+            // Show confirmation if cells have output
+            const cellsWithOutput = cellIdsToRemove.filter(id => {
+                const numId = id.replace('cell-', '');
+                const out = document.getElementById(`out-${numId}`);
+                return out && out.children.length > 0;
+            });
+
+            let shouldRemoveCells = true;
+            if (cellsWithOutput.length > 0) {
+                shouldRemoveCells = await customConfirm(
+                    `This edit will also clear ${cellIdsToRemove.length} notebook cell${cellIdsToRemove.length > 1 ? 's' : ''} generated from the removed messages. Continue?`
+                );
+            }
+
+            if (shouldRemoveCells) {
+                cellIdsToRemove.forEach(cellId => {
+                    const cellEl = document.getElementById(cellId);
+                    if (cellEl) {
+                        // Remove the add-cell-bar after it too
+                        const nextBar = cellEl.nextElementSibling;
+                        if (nextBar && nextBar.classList.contains('add-cell-bar')) nextBar.remove();
+                        cellEl.remove();
+                    }
+                });
+            }
         }
 
         // ── 3. Slice arrays to edited index ───────────────────────────────
@@ -1981,7 +2165,7 @@ async function runEditedQuery(prompt, messageIndex) {
     assistantBubble.style.border = '1px solid #e6edf3';
     assistantBubble.style.borderRadius = '10px';
     assistantBubble.style.margin = '6px 0'; // Tighter
-    assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><span class="pulse-icon"></span><strong>Assistant</strong></div><div style="margin-top:8px;color:#64748b;">Generating response... </div>`;
+    assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><strong style="font-size:0.9rem;">Assistant</strong></div><div style="margin-top:10px;"><div class="typing-dots"><span></span><span></span><span></span></div></div>`;
     assistantBubble.querySelector('div').appendChild(timerEl);
     contentArea.appendChild(assistantBubble);
 
@@ -2005,7 +2189,7 @@ async function runEditedQuery(prompt, messageIndex) {
     };
 
     try {
-        const resp = await fetch('query', {
+        const resp = await fetch('query/stream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(reqPayload),
@@ -2014,11 +2198,64 @@ async function runEditedQuery(prompt, messageIndex) {
 
         if (!resp.ok) throw new Error('Server Error');
 
-        const data = await resp.json();
+        // Stream reader
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let streamedText = "";
+        let finalData = null;
+        let codeData = null;
+
+        // Setup streaming bubble
+        const streamBody2 = document.createElement('div');
+        streamBody2.style.cssText = 'font-size:0.88rem;line-height:1.5;min-height:1em;';
+        assistantBubble.innerHTML = '';
+        const streamHeader2 = document.createElement('div');
+        streamHeader2.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;';
+        streamHeader2.innerHTML = '<strong style="font-size:0.9rem;">Assistant</strong><span style="display:flex;align-items:center;gap:6px;"><span style="color:#888;font-size:0.7rem;" id="stream-timer-label2"></span></span>';
+        assistantBubble.appendChild(streamHeader2);
+        assistantBubble.appendChild(streamBody2);
+        if (tray) tray.scrollTop = tray.scrollHeight;
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop();
+            for (const line of lines) {
+                if (!line.startsWith("data: ")) continue;
+                const jsonStr = line.slice(6).trim();
+                if (!jsonStr) continue;
+                try {
+                    const event = JSON.parse(jsonStr);
+                    if (event.type === "token") {
+                        streamedText += event.text;
+                        if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
+                            const displayText2 = streamedText.replace(/```(?:python|py)[\s\S]*?```/gi, '').trim();
+                            streamBody2.innerHTML = DOMPurify.sanitize(marked.parse(displayText2 || ''));
+                        } else {
+                            streamBody2.innerText = streamedText.replace(/```[\s\S]*?```/g, '').trim();
+                        }
+                        if (tray) tray.scrollTop = tray.scrollHeight;
+                    } else if (event.type === "code") {
+                        codeData = event;
+                    } else if (event.type === "done") {
+                        finalData = event;
+                        break;
+                    }
+                } catch(e) {}
+            }
+            if (finalData) break;
+        }
+
         clearInterval(timerInt);
         const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
-        const toolUsed = data.tool_used || '';
-        let answer = data.answer || '';
+        const streamTimerLabel2 = document.getElementById('stream-timer-label2');
+        if (streamTimerLabel2) streamTimerLabel2.textContent = `Took ${totalTime}s`;
+
+        const toolUsed = finalData?.tool_used || 'Direct Answer';
+        let answer = codeData?.answer || finalData?.answer || streamedText;
 
         // Title: set once from FIRST user message only.
         if (currentChatId && typeof updateChatTitleFromFirstUserMessage === 'function') {
@@ -2044,6 +2281,11 @@ async function runEditedQuery(prompt, messageIndex) {
             } else {
                 answer = originalAnswer.replace(codeMatch[0], '').trim();
                 codeNode = stageCodeProposalUI(code, prompt);
+                // Store cell ID for history jump
+                const cellId = pendingCodeProposal ? pendingCodeProposal.cellId : null;
+                if (cellId && chatHistory.length > 0) {
+                    chatHistory[chatHistory.length - 1]._cellId = cellId;
+                }
             }
         } else if (codeMatch && !isGenerateIntent) {
             answer = stripCodeBlocks(originalAnswer);
@@ -2052,28 +2294,29 @@ async function runEditedQuery(prompt, messageIndex) {
             if (!showCode) answer = stripCodeBlocks(answer);
         }
 
-        // Render final assistant bubble
-        assistantBubble.innerHTML = '';
-        const header = document.createElement('div');
-        header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px'; // Tighter
-        const titleEl = document.createElement('strong');
-        titleEl.innerText = 'Assistant';
-        const timeLabel = document.createElement('span');
-        timeLabel.style.cssText = 'color:#888;font-size:0.7rem'; // Smaller
-        timeLabel.innerText = `Took ${totalTime}s`;
-        header.appendChild(titleEl);
-        header.appendChild(timeLabel);
-
-        const body = document.createElement('div');
-        body.style.cssText = 'font-size:0.88rem;line-height:1.5'; // Shrunk from 0.95rem (~14px)
+        // Render final assistant bubble — update the streamed body with final content
         if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
-            body.innerHTML = DOMPurify.sanitize(marked.parse(answer || ''));
+            streamBody2.innerHTML = DOMPurify.sanitize(marked.parse(answer || ''));
         } else {
-            body.innerText = answer;
+            streamBody2.innerText = answer;
         }
 
-        assistantBubble.appendChild(header);
-        assistantBubble.appendChild(body);
+        // Add copy button to the header
+        const rightGroup = streamHeader2.querySelector('span');
+        const editCopyBtn = document.createElement('button');
+        editCopyBtn.title = 'Copy response';
+        editCopyBtn.style.cssText = 'background:none;border:none;cursor:pointer;color:#94a3b8;padding:2px 4px;display:inline-flex;align-items:center;opacity:0;transition:opacity 0.2s;';
+        editCopyBtn.innerHTML = ICON_COPY;
+        editCopyBtn.onclick = () => {
+            navigator.clipboard.writeText(answer).then(() => {
+                editCopyBtn.innerHTML = ICON_COPY_CHECK;
+                setTimeout(() => editCopyBtn.innerHTML = ICON_COPY, 1500);
+            });
+        };
+        assistantBubble.addEventListener('mouseenter', () => editCopyBtn.style.opacity = '1');
+        assistantBubble.addEventListener('mouseleave', () => editCopyBtn.style.opacity = '0');
+        if (rightGroup) rightGroup.appendChild(editCopyBtn);
+
         if (codeNode) assistantBubble.appendChild(codeNode);
 
         if (tray) tray.scrollTop = tray.scrollHeight;
@@ -2297,7 +2540,7 @@ async function runAIQuery() {
     assistantBubble.style.border = '1px solid #e6edf3';
     assistantBubble.style.borderRadius = '10px';
     assistantBubble.style.margin = '6px 0'; // Tightened vertical margins
-    assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><span class="pulse-icon"></span><strong>Assistant</strong></div><div style="margin-top:8px;color:#64748b;">Generating response... </div>`;
+    assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><strong style="font-size:0.9rem;">Assistant</strong></div><div style="margin-top:10px;"><div class="typing-dots"><span></span><span></span><span></span></div></div>`;
     // add timer to the header
     assistantBubble.querySelector('div').appendChild(timerEl);
     contentArea.appendChild(assistantBubble);
@@ -2313,9 +2556,7 @@ async function runAIQuery() {
     }, 100);
 
     try {
-        // IMPORTANT: keep the SAME endpoint string you used earlier.
-        // If your old code had fetch("/query"...), use "/query". If it had fetch("query"...), use "query".
-        const endpoint = "query";
+        const endpoint = "query/stream";
 
         // Create abort controller for this request
         currentAbortController = new AbortController();
@@ -2338,37 +2579,20 @@ async function runAIQuery() {
         const pL = prompt.toLowerCase();
         if (pL.includes("fix") || pL.includes("update") || pL.includes("change") || pL.includes("modify")) {
             reqPayload.is_modification = true;
-            
-            // Try to find the active cell - prefer lastActiveCellId, then look for cell with focus, then use last code cell
             let activeCellId = lastActiveCellId;
-            
             if (!activeCellId) {
-                // Look for cell with focus
                 const focusedCell = document.querySelector('.code-cell:focus-within');
-                if (focusedCell) {
-                    activeCellId = focusedCell.id.replace('cell-', '');
-                }
+                if (focusedCell) activeCellId = focusedCell.id.replace('cell-', '');
             }
-            
             if (!activeCellId) {
-                // Use the last code cell
                 const allCodeCells = document.querySelectorAll('.code-cell:not(.text-cell)');
-                if (allCodeCells.length > 0) {
-                    const lastCell = allCodeCells[allCodeCells.length - 1];
-                    activeCellId = lastCell.id.replace('cell-', '');
-                }
+                if (allCodeCells.length > 0) activeCellId = allCodeCells[allCodeCells.length - 1].id.replace('cell-', '');
             }
-            
             reqPayload.active_cell_id = activeCellId ? String(activeCellId) : null;
-            
             if (activeCellId) {
                 const ce = document.querySelector(`#cell-${activeCellId} .code-editor`);
                 if (ce) {
-                    if (ce.nextSibling && ce.nextSibling.classList && ce.nextSibling.classList.contains('CodeMirror')) {
-                        reqPayload.original_code = ce.nextSibling.CodeMirror.getValue();
-                    } else {
-                        reqPayload.original_code = ce.value;
-                    }
+                    reqPayload.original_code = (ce.nextSibling?.CodeMirror?.getValue()) || ce.value;
                 }
             }
         }
@@ -2382,147 +2606,156 @@ async function runAIQuery() {
 
         if (!resp.ok) throw new Error("Server Error");
 
-        const data = await resp.json();
-        clearInterval(timerInt);
-        console.log("[AI Query] Received response:", data);
+        // ── Streaming reader ──────────────────────────────────────────────
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let streamedText = "";   // accumulates all streamed tokens
+        let finalData = null;    // set when we receive the "done" event
+        let codeData = null;     // set when we receive a "code" event
 
-        // If the server returned content (for files attached in chat), inject it into Pyodide
-        if (data.active_file_content && pyodide) {
-            try {
-                const userNs = pyodide.globals.get("user_ns");
-                userNs.set("dataset_string", data.active_file_content);
-                console.log(`[Pyodide] Injected 'dataset_string' from chat (${data.active_file_content.length} chars)`);
-                console.log(`[Pyodide] First 200 chars:`, data.active_file_content.substring(0, 200));
-            } catch (err) {
-                console.error("Failed to inject dataset_string into Pyodide:", err);
-                console.error("Error details:", err.stack);
+        // Prepare the assistant bubble body for live token injection
+        const streamBody = document.createElement('div');
+        streamBody.style.cssText = 'font-size:0.88rem;line-height:1.5;min-height:1em;';
+        // Clear the "Generating response..." placeholder — bubble already has correct styles
+        assistantBubble.innerHTML = '';
+        const streamHeader = document.createElement('div');
+        streamHeader.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;';
+        streamHeader.innerHTML = '<strong style="font-size:0.9rem;">Assistant</strong><span style="display:flex;align-items:center;gap:6px;"><span style="color:#888;font-size:0.7rem;" id="stream-timer-label"></span></span>';
+        assistantBubble.appendChild(streamHeader);
+        assistantBubble.appendChild(streamBody);
+        // Scroll to show the new bubble
+        if (tray) tray.scrollTop = tray.scrollHeight;
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop(); // keep incomplete line in buffer
+
+            for (const line of lines) {
+                if (!line.startsWith("data: ")) continue;
+                const jsonStr = line.slice(6).trim();
+                if (!jsonStr) continue;
+                try {
+                    const event = JSON.parse(jsonStr);
+
+                    if (event.type === "token") {
+                        streamedText += event.text;
+                        // Render markdown incrementally — strip code blocks from chat (they go to notebook)
+                        if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
+                            const displayText = streamedText.replace(/```(?:python|py)[\s\S]*?```/gi, '').trim();
+                            streamBody.innerHTML = DOMPurify.sanitize(marked.parse(displayText || ''));
+                        } else {
+                            streamBody.innerText = streamedText.replace(/```[\s\S]*?```/g, '').trim();
+                        }
+                        if (tray) tray.scrollTop = tray.scrollHeight;
+
+                    } else if (event.type === "code") {
+                        codeData = event;
+
+                    } else if (event.type === "done") {
+                        finalData = event;
+                        break;
+
+                    } else if (event.type === "error") {
+                        streamBody.innerHTML += `<div style="color:#ef4444;margin-top:8px;">Error: ${event.message}</div>`;
+                    }
+                } catch (e) {
+                    // malformed JSON chunk — skip
+                }
             }
-        } else if (data.active_file_content) {
-            console.warn("[Pyodide] File content received but Pyodide not ready yet");
+            if (finalData) break;
         }
 
+        clearInterval(timerInt);
         const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
-        const toolUsed = data.tool_used || "";
-        const originalAnswer = data.answer || "";
+        const streamTimerLabel = document.getElementById('stream-timer-label');
+        if (streamTimerLabel) streamTimerLabel.textContent = `Took ${totalTime}s`;
+
+        // Use codeData if we got a tool result, otherwise use streamed text
+        const toolUsed = finalData?.tool_used || "Direct Answer";
+        const originalAnswer = codeData?.answer || finalData?.answer || streamedText;
         let answer = originalAnswer;
 
-        console.log(`[AI Query] Tool: ${toolUsed}, Answer Length: ${answer.length}`);
-
-        if (data.action === "UPDATE_CELL" && data.modified_code) {
-            console.log(`[UPDATE_CELL] Updating cell ${data.cell_id} with ${data.modified_code.length} chars of code`);
-            updateLastActiveCell(data.cell_id, data.modified_code);
-            console.log(`[UPDATE_CELL] Cell updated successfully`);
+        if (finalData?.action === "UPDATE_CELL" && finalData?.modified_code) {
+            updateLastActiveCell(finalData.cell_id, finalData.modified_code);
         }
 
-        // Title: set once from FIRST user message only.
         if (currentChatId && typeof updateChatTitleFromFirstUserMessage === 'function') {
             updateChatTitleFromFirstUserMessage(currentChatId, prompt);
         }
 
-        // Update history
         chatHistory.push({ role: "user", content: prompt, images: base64Images.length > 0 ? base64Images : undefined });
         chatHistory.push({ role: "assistant", content: answer });
         updateContextMeter();
 
-        // Only match explicit Python code blocks (```python or ```py) — NOT ```sql, ``` plain, etc.
         const codeMatch = originalAnswer.match(/```(?:python|py)\n([\s\S]*?)```/i);
-
-        // Normalize tool intent check (case-insensitive and handles spaces/underscores)
         const normalizedTool = toolUsed.toUpperCase().replace(/_/g, " ");
         const isGenerateIntent = normalizedTool.includes("GENERATE") || normalizedTool.includes("CODE");
-
-        console.log("[AI Query] Code detection:", {
-            hasCodeMatch: !!codeMatch,
-            toolUsed: toolUsed,
-            normalizedTool: normalizedTool,
-            isGenerateIntent: isGenerateIntent,
-            showCode: showCode,
-            codeLength: codeMatch ? codeMatch[1].trim().length : 0
-        });
 
         let codeNode = null;
         // Only stage as a notebook cell if it's a Python code block
         if (codeMatch && isGenerateIntent) {
             const code = codeMatch[1].trim();
-            console.log("[AI Query] Extracted code length:", code.length);
-            console.log("[AI Query] Code preview:", code.substring(0, 100) + "...");
 
             if (!showCode) {
                 answer = stripCodeBlocks(originalAnswer);
                 codeNode = null;
-                console.log("[AI Query] showCode is false, stripping code blocks");
             } else {
-                // Remove THE FIRST code block from the answer text to avoid double display
+                // Strip the code block from the streamed text so it doesn't double-render
                 answer = originalAnswer.replace(codeMatch[0], "").trim();
-
-                // Fallback if the answer only contained the code block
-                if (!answer) {
-                    answer = isGenerateIntent ? "I've generated the following code based on your request:" : "Here is the code I've prepared:";
-                }
+                if (!answer) answer = "I've generated the following code based on your request:";
 
                 try {
-                    console.log("[AI Query] Calling stageCodeProposalUI...");
                     codeNode = stageCodeProposalUI(code, prompt);
-                    console.log("[AI Query] Code proposal UI created successfully, codeNode:", !!codeNode);
+                    const cellId = pendingCodeProposal ? pendingCodeProposal.cellId : null;
+                    if (cellId && chatHistory.length > 0) {
+                        chatHistory[chatHistory.length - 1]._cellId = cellId;
+                    }
                 } catch (err) {
-                    console.error("[AI Query] Error staging code proposal:", err);
-                    console.error("[AI Query] Error stack:", err.stack);
-                    // Fallback: put the code back into the answer if proposal UI fails
                     answer += `\n\n\`\`\`python\n${code}\n\`\`\``;
                     codeNode = null;
                 }
             }
         } else {
-            console.log("[AI Query] No code block matched or conditions not met");
-            // Standard message: If showCode is false, strip blocks. Otherwise keep them (marked will render them).
             if (!showCode) answer = stripCodeBlocks(answer);
         }
 
-        // Final safety: ensure answer is never empty if original was not
-        if (!answer.trim() && originalAnswer.trim() && !codeNode) {
-            console.log("[AI Query] Final safety triggered: restoring original answer");
-            answer = originalAnswer;
+        // Final safety
+        if (!answer.trim() && originalAnswer.trim() && !codeNode) answer = originalAnswer;
+
+        // Update the streamed bubble with final rendered content + copy button
+        // (header was already added during streaming setup)
+        if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
+            streamBody.innerHTML = DOMPurify.sanitize(marked.parse(answer || ''));
+        } else {
+            streamBody.innerText = answer;
         }
 
-        // Render assistant response into existing assistantBubble
-        assistantBubble.innerHTML = '';
-        const header = document.createElement('div');
-        header.style.display = 'flex';
-        header.style.justifyContent = 'space-between';
-        header.style.alignItems = 'center';
-        header.style.marginBottom = '6px'; // Tighter
-        const title = document.createElement('strong');
-        title.innerText = 'Assistant';
-        const timeLabel = document.createElement('span');
-        timeLabel.style.color = '#888';
-        timeLabel.style.fontSize = '0.7rem'; // Smaller
-        timeLabel.innerText = `Took ${totalTime}s`;
-        header.appendChild(title);
-        header.appendChild(timeLabel);
+        // Add copy button to the header
+        const copyBtn = document.createElement('button');
+        copyBtn.title = 'Copy response';
+        copyBtn.style.cssText = 'background:none;border:none;cursor:pointer;color:#94a3b8;padding:2px 4px;display:inline-flex;align-items:center;opacity:0;transition:opacity 0.2s;';
+        copyBtn.innerHTML = ICON_COPY;
+        copyBtn.onclick = () => {
+            navigator.clipboard.writeText(originalAnswer || answer).then(() => {
+                copyBtn.innerHTML = ICON_COPY_CHECK;
+                setTimeout(() => copyBtn.innerHTML = ICON_COPY, 1500);
+            });
+        };
+        assistantBubble.addEventListener('mouseenter', () => copyBtn.style.opacity = '1');
+        assistantBubble.addEventListener('mouseleave', () => copyBtn.style.opacity = '0');
+        // Append copy button into the right-side group (next to timer)
+        const rightGroup = streamHeader.querySelector('span');
+        if (rightGroup) rightGroup.appendChild(copyBtn);
+        else streamHeader.appendChild(copyBtn);
 
-        const body = document.createElement('div');
-        body.style.fontSize = '0.88rem';
-        body.style.lineHeight = '1.5';
-
-        try {
-            if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
-                const parseFn = (typeof marked.parse === 'function') ? marked.parse : marked;
-                body.innerHTML = DOMPurify.sanitize(parseFn(answer || ''));
-            } else {
-                body.innerText = answer;
-            }
-        } catch (renderError) {
-            console.error("Error rendering markdown:", renderError);
-            body.innerText = answer;
-        }
-
-        assistantBubble.appendChild(header);
-        assistantBubble.appendChild(body);
         if (codeNode) assistantBubble.appendChild(codeNode);
-
         if (tray) tray.scrollTop = tray.scrollHeight;
 
-        // Ensure composer is fresh after successful send
         clearComposerAttachments();
     } catch (e) {
         clearInterval(timerInt);
@@ -2876,7 +3109,8 @@ function initAIWidget() {
             if (input) {
                 input.value = transcript;
                 input.style.height = "auto";
-                input.style.height = Math.min(input.scrollHeight, 140) + "px";
+                input.style.height = Math.min(input.scrollHeight, 120) + "px";
+                input.style.overflowY = input.scrollHeight > 120 ? "auto" : "hidden";
             }
         };
 
@@ -2899,11 +3133,50 @@ function initAIWidget() {
         });
     }
 
-    // Auto-grow textarea
+    // Auto-grow textarea — cap at 120px then scroll
     if (input) {
         input.addEventListener("input", () => {
             input.style.height = "auto";
-            input.style.height = Math.min(input.scrollHeight, 140) + "px";
+            input.style.height = Math.min(input.scrollHeight, 120) + "px";
+            input.style.overflowY = input.scrollHeight > 120 ? "auto" : "hidden";
+        });
+
+        // Paste support — handle image paste directly into chat
+        input.addEventListener("paste", async (e) => {
+            const items = e.clipboardData?.items;
+            if (!items) return;
+            for (const item of items) {
+                if (item.type.startsWith("image/")) {
+                    e.preventDefault();
+                    const file = item.getAsFile();
+                    if (!file) continue;
+                    // Convert to base64 and add as attachment
+                    const base64 = await new Promise((resolve) => {
+                        const reader = new FileReader();
+                        reader.onload = (ev) => resolve(ev.target.result);
+                        reader.readAsDataURL(file);
+                    });
+                    const pseudoFile = new File([file], `pasted-image-${Date.now()}.png`, { type: file.type });
+                    attachedFiles.push(pseudoFile);
+                    const fileChips = document.getElementById('ai-file-chips');
+                    if (fileChips && typeof renderFileChip === 'function') {
+                        renderFileChip(pseudoFile, fileChips);
+                    } else {
+                        // Fallback: show a small preview chip
+                        const chip = document.createElement('div');
+                        chip.className = 'ai-file-chip';
+                        chip.style.cssText = 'display:inline-flex;align-items:center;gap:6px;padding:4px 8px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;font-size:0.75rem;';
+                        const img = document.createElement('img');
+                        img.src = base64;
+                        img.style.cssText = 'width:24px;height:24px;object-fit:cover;border-radius:4px;';
+                        chip.appendChild(img);
+                        chip.appendChild(document.createTextNode('Pasted image'));
+                        fileChips?.appendChild(chip);
+                    }
+                    showToast('Image pasted — will be sent with your message', 'info', 2000);
+                    break; // only handle first image
+                }
+            }
         });
     }
 
@@ -4003,10 +4276,12 @@ function renderChatHistory(history) {
 
             if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
                 let displayContent = msg.content || '';
+                const storedCellId = msg._cellId || null;
                 const pairIdx = Array.from(contentArea.querySelectorAll('.ai-msg.assistant')).length;
                 // Replace python code blocks with a clickable pill
                 displayContent = displayContent.replace(/```(?:python|py)\n[\s\S]*?```/gi, (match) => {
-                    return `\n<a href="#" class="notebook-cell-ref" data-pair-index="${pairIdx}" style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;font-size:0.8rem;color:#4f46e5;text-decoration:none;margin:4px 0;">📓 Cell ${pairIdx + 1} — click to jump</a>\n`;
+                    const cellLabel = storedCellId ? storedCellId.replace('cell-', 'Cell ') : `Cell ${pairIdx + 1}`;
+                    return `\n<a href="#" class="notebook-cell-ref" data-cell-id="${storedCellId || ''}" data-pair-index="${pairIdx}" style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;font-size:0.8rem;color:#4f46e5;text-decoration:none;margin:4px 0;">📓 ${cellLabel} — click to jump</a>\n`;
                 });
                 // Collapse other code fences
                 displayContent = displayContent.replace(/```[\s\S]*?```/g, (match) => {
@@ -4014,7 +4289,7 @@ function renderChatHistory(history) {
                     const lineCount = match.split('\n').length - 2;
                     return lang ? `\`[${lang.toUpperCase()} — ${lineCount} lines]\`` : `\`[code — ${lineCount} lines]\``;
                 });
-                body.innerHTML = DOMPurify.sanitize(marked.parse(displayContent), { ADD_ATTR: ['data-pair-index'] });
+                body.innerHTML = DOMPurify.sanitize(marked.parse(displayContent), { ADD_ATTR: ['data-pair-index', 'data-cell-id'] });
             } else {
                 body.innerText = msg.content;
             }
@@ -4032,15 +4307,29 @@ function renderChatHistory(history) {
     contentArea.querySelectorAll('a.notebook-cell-ref').forEach(link => {
         link.addEventListener('click', (e) => {
             e.preventDefault();
+            const cellId = link.dataset.cellId;
             const pairIdx = parseInt(link.dataset.pairIndex, 10);
-            let target = document.getElementById(`cell-${pairIdx + 1}`);
+            let target = cellId ? document.getElementById(cellId) : null;
+            if (!target) target = document.getElementById(`cell-${pairIdx + 1}`);
             if (!target) {
                 const allCells = document.querySelectorAll('#workspace-view .code-cell');
                 target = allCells[pairIdx] || allCells[allCells.length - 1];
             }
             if (target) {
-                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                if (typeof activateCell === 'function') activateCell(target);
+                const workspaceView = document.getElementById('workspace-view');
+                if (workspaceView) workspaceView.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+                const cellNumId = target.id.replace('cell-', '');
+                const outDiv = document.getElementById(`out-${cellNumId}`);
+                const scrollTarget = (outDiv && outDiv.children.length > 0) ? outDiv : target;
+
+                setTimeout(() => {
+                    scrollTarget.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    if (typeof activateCell === 'function') activateCell(target);
+                    target.style.transition = 'box-shadow 0.3s';
+                    target.style.boxShadow = '0 0 0 3px #c7d2fe';
+                    setTimeout(() => { target.style.boxShadow = ''; }, 1200);
+                }, 150);
             }
         });
     });
@@ -4322,7 +4611,168 @@ function deleteCell(button) {
 }
 
 async function moreOptions(button) {
-    await customAlert('More options: duplicate, etc. (not implemented)');
+    const cell = button.closest('.code-cell');
+    if (!cell) return;
+
+    // Build a compact dropdown menu
+    const existing = document.getElementById('cell-more-menu');
+    if (existing) existing.remove();
+
+    const menu = document.createElement('div');
+    menu.id = 'cell-more-menu';
+    menu.style.cssText = [
+        'position:absolute', 'z-index:9999',
+        'background:#fff', 'border:1px solid #e5e7eb',
+        'border-radius:8px', 'box-shadow:0 8px 24px rgba(15,23,42,0.12)',
+        'padding:4px 0', 'min-width:170px', 'font-size:0.82rem'
+    ].join(';');
+
+    const items = [
+        { icon: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`, label: 'Duplicate cell',   action: () => duplicateCell(cell) },
+        { icon: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`, label: 'Copy code',         action: () => copyCellCode(cell) },
+        { icon: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>`, label: 'Clear output',      action: () => clearCellOutput(cell) },
+        { icon: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>`, label: 'Insert cell above',  action: () => insertCellAbove(cell) },
+        { icon: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>`, label: 'Convert to text',   action: () => convertCellType(cell) },
+    ];
+
+    items.forEach(item => {
+        const row = document.createElement('button');
+        row.style.cssText = 'display:flex;align-items:center;gap:8px;width:100%;padding:7px 14px;background:none;border:none;cursor:pointer;color:#0f172a;text-align:left;';
+        row.innerHTML = `<span style="width:16px;height:16px;display:flex;align-items:center;justify-content:center;color:#64748b;">${item.icon}</span><span>${item.label}</span>`;
+        row.onmouseenter = () => row.style.background = '#f1f5f9';
+        row.onmouseleave = () => row.style.background = 'none';
+        row.onclick = (e) => { e.stopPropagation(); menu.remove(); item.action(); };
+        menu.appendChild(row);
+    });
+
+    // Position below the button
+    document.body.appendChild(menu);
+    const rect = button.getBoundingClientRect();
+    menu.style.top = (rect.bottom + 4) + 'px';
+    menu.style.left = Math.min(rect.left, window.innerWidth - 180) + 'px';
+
+    // Close on outside click
+    const close = (e) => { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('click', close); } };
+    setTimeout(() => document.addEventListener('click', close), 0);
+}
+
+function duplicateCell(cell) {
+    const isText = cell.classList.contains('text-cell');
+    cellCount++;
+    const newId = cellCount;
+
+    // Get current code
+    let code = '';
+    const editor = getCodeEditorFromCell(cell);
+    if (editor) {
+        const cm = editor.nextSibling?.CodeMirror;
+        code = cm ? cm.getValue() : editor.value;
+    }
+
+    if (isText) {
+        const textEditor = cell.querySelector('.text-editor');
+        const source = textEditor ? textEditor.innerHTML : '';
+        const barHtml = `<div class="add-cell-bar"><button class="add-cell-btn" onclick="addCodeCell(this)">＋ Code</button><button class="add-cell-btn secondary" onclick="addTextCell(this)">＋ Text</button></div>`;
+        const cellHtml = `<div class="code-cell text-cell" onclick="activateCell(this)" id="cell-${newId}">
+            <div class="cell-controls"><button title="Move Up" onclick="event.stopPropagation();moveCellUp(this)">${ICON_MOVE_UP}</button><button title="Move Down" onclick="event.stopPropagation();moveCellDown(this)">${ICON_MOVE_DOWN}</button><button title="Delete" onclick="event.stopPropagation();deleteCell(this)">${ICON_DELETE}</button><button title="More" onclick="event.stopPropagation();moreOptions(this)">${ICON_MORE}</button></div>
+            <div class="cell-content-part"><div class="text-editor" contenteditable="false" ondblclick="enableTextEdit(this)">${source}</div></div></div>`;
+        const bar = cell.nextElementSibling;
+        if (bar) bar.insertAdjacentHTML('afterend', cellHtml + barHtml);
+    } else {
+        const barHtml = `<div class="add-cell-bar"><button class="add-cell-btn" onclick="addCodeCell(this)">＋ Code</button><button class="add-cell-btn secondary" onclick="addTextCell(this)">＋ Text</button></div>`;
+        const cellHtml = `<div class="code-cell" id="cell-${newId}" onclick="activateCell(this)">
+            <div class="cell-controls"><button title="Move Up" onclick="event.stopPropagation();moveCellUp(this)">${ICON_MOVE_UP}</button><button title="Move Down" onclick="event.stopPropagation();moveCellDown(this)">${ICON_MOVE_DOWN}</button><button title="Edit" onclick="event.stopPropagation();editCell(this)">${ICON_EDIT}</button><button title="Delete" onclick="event.stopPropagation();deleteCell(this)">${ICON_DELETE}</button><button title="More" onclick="event.stopPropagation();moreOptions(this)">${ICON_MORE}</button></div>
+            <div class="cell-run-part"><button class="play-btn" onclick="event.stopPropagation();runCode(${newId})" id="btn-${newId}">▶</button><span id="exec-label-${newId}" style="font-size:0.65rem;color:#94a3b8;font-family:monospace;margin-top:2px;display:block;text-align:center;min-width:24px;"></span></div>
+            <div class="cell-content-part"><div class="code-placeholder">Start coding or <u onclick="event.stopPropagation();focusAI()">generate</u> with AI.</div><textarea class="code-editor" oninput="autoResize(this);markDirty()" rows="1"></textarea><div class="cell-output" id="out-${newId}"></div></div></div>`;
+        const bar = cell.nextElementSibling;
+        if (bar) bar.insertAdjacentHTML('afterend', cellHtml + barHtml);
+        // Set code after DOM insertion
+        setTimeout(() => {
+            const newCell = document.getElementById(`cell-${newId}`);
+            if (newCell) {
+                initCodeMirror(newCell.querySelector('.code-editor'));
+                const newEditor = getCodeEditorFromCell(newCell);
+                if (newEditor) {
+                    const cm = newEditor.nextSibling?.CodeMirror;
+                    if (cm) cm.setValue(code);
+                    else newEditor.value = code;
+                }
+                activateCell(newCell);
+            }
+        }, 50);
+    }
+    markDirty();
+    showToast('Cell duplicated', 'success', 1500);
+}
+
+function copyCellCode(cell) {
+    const editor = getCodeEditorFromCell(cell);
+    if (!editor) return;
+    const cm = editor.nextSibling?.CodeMirror;
+    const code = cm ? cm.getValue() : editor.value;
+    navigator.clipboard.writeText(code).then(() => showToast('Code copied to clipboard', 'success', 1500));
+}
+
+function clearCellOutput(cell) {
+    const idMatch = cell.id.match(/cell-(\d+)/);
+    if (!idMatch) return;
+    const outDiv = document.getElementById(`out-${idMatch[1]}`);
+    if (outDiv) { outDiv.innerHTML = ''; showToast('Output cleared', 'info', 1500); }
+    const btn = document.getElementById(`btn-${idMatch[1]}`);
+    if (btn) { btn.textContent = '▶'; btn.style.fontSize = ''; btn.style.color = ''; btn.onmouseenter = null; btn.onmouseleave = null; }
+    markDirty();
+}
+
+function insertCellAbove(cell) {
+    // Find the add-cell-bar before this cell (or insert at top)
+    const prevBar = cell.previousElementSibling;
+    if (prevBar && prevBar.classList.contains('add-cell-bar')) {
+        addCodeCell(prevBar.querySelector('.add-cell-btn'));
+    } else {
+        // Insert at very top
+        cellCount++;
+        const newId = cellCount;
+        const barHtml = `<div class="add-cell-bar"><button class="add-cell-btn" onclick="addCodeCell(this)">＋ Code</button><button class="add-cell-btn secondary" onclick="addTextCell(this)">＋ Text</button></div>`;
+        const cellHtml = `<div class="code-cell" id="cell-${newId}" onclick="activateCell(this)">
+            <div class="cell-controls"><button title="Move Up" onclick="event.stopPropagation();moveCellUp(this)">${ICON_MOVE_UP}</button><button title="Move Down" onclick="event.stopPropagation();moveCellDown(this)">${ICON_MOVE_DOWN}</button><button title="Edit" onclick="event.stopPropagation();editCell(this)">${ICON_EDIT}</button><button title="Delete" onclick="event.stopPropagation();deleteCell(this)">${ICON_DELETE}</button><button title="More" onclick="event.stopPropagation();moreOptions(this)">${ICON_MORE}</button></div>
+            <div class="cell-run-part"><button class="play-btn" onclick="event.stopPropagation();runCode(${newId})" id="btn-${newId}">▶</button><span id="exec-label-${newId}" style="font-size:0.65rem;color:#94a3b8;font-family:monospace;margin-top:2px;display:block;text-align:center;min-width:24px;"></span></div>
+            <div class="cell-content-part"><div class="code-placeholder">Start coding or <u onclick="event.stopPropagation();focusAI()">generate</u> with AI.</div><textarea class="code-editor" oninput="autoResize(this);markDirty()" rows="1"></textarea><div class="cell-output" id="out-${newId}"></div></div></div>`;
+        cell.insertAdjacentHTML('beforebegin', cellHtml + barHtml);
+        setTimeout(() => {
+            const newCell = document.getElementById(`cell-${newId}`);
+            if (newCell) { initCodeMirror(newCell.querySelector('.code-editor')); activateCell(newCell); }
+        }, 50);
+        markDirty();
+    }
+}
+
+function convertCellType(cell) {
+    const isText = cell.classList.contains('text-cell');
+    if (isText) {
+        // Text → Code
+        cell.classList.remove('text-cell');
+        const textEditor = cell.querySelector('.text-editor');
+        const content = textEditor ? textEditor.innerText : '';
+        const idMatch = cell.id.match(/cell-(\d+)/);
+        const id = idMatch ? idMatch[1] : cellCount;
+        cell.innerHTML = `
+            <div class="cell-controls"><button title="Move Up" onclick="event.stopPropagation();moveCellUp(this)">${ICON_MOVE_UP}</button><button title="Move Down" onclick="event.stopPropagation();moveCellDown(this)">${ICON_MOVE_DOWN}</button><button title="Edit" onclick="event.stopPropagation();editCell(this)">${ICON_EDIT}</button><button title="Delete" onclick="event.stopPropagation();deleteCell(this)">${ICON_DELETE}</button><button title="More" onclick="event.stopPropagation();moreOptions(this)">${ICON_MORE}</button></div>
+            <div class="cell-run-part"><button class="play-btn" onclick="event.stopPropagation();runCode(${id})" id="btn-${id}">▶</button><span id="exec-label-${id}" style="font-size:0.65rem;color:#94a3b8;font-family:monospace;margin-top:2px;display:block;text-align:center;min-width:24px;"></span></div>
+            <div class="cell-content-part"><div class="code-placeholder">Start coding or <u onclick="event.stopPropagation();focusAI()">generate</u> with AI.</div><textarea class="code-editor" oninput="autoResize(this);markDirty()" rows="1"></textarea><div class="cell-output" id="out-${id}"></div></div>`;
+        initCodeMirror(cell.querySelector('.code-editor'));
+        const editor = getCodeEditorFromCell(cell);
+        if (editor) { const cm = editor.nextSibling?.CodeMirror; if (cm) cm.setValue(content); else editor.value = content; }
+    } else {
+        // Code → Text
+        cell.classList.add('text-cell');
+        const editor = getCodeEditorFromCell(cell);
+        const code = editor ? (editor.nextSibling?.CodeMirror?.getValue() || editor.value) : '';
+        cell.innerHTML = `
+            <div class="cell-controls"><button title="Move Up" onclick="event.stopPropagation();moveCellUp(this)">${ICON_MOVE_UP}</button><button title="Move Down" onclick="event.stopPropagation();moveCellDown(this)">${ICON_MOVE_DOWN}</button><button title="Delete" onclick="event.stopPropagation();deleteCell(this)">${ICON_DELETE}</button><button title="More" onclick="event.stopPropagation();moreOptions(this)">${ICON_MORE}</button></div>
+            <div class="cell-content-part"><div class="text-editor" contenteditable="false" ondblclick="enableTextEdit(this)">${code}</div></div>`;
+    }
+    markDirty();
+    showToast(`Converted to ${isText ? 'code' : 'text'} cell`, 'info', 1500);
 }
 
 /* ===========================================
@@ -5165,10 +5615,14 @@ function onProviderChange() {
     const modelEl = document.getElementById('llm-openai-model');
     const keyEl   = document.getElementById('llm-api-key');
     const hintEl  = document.getElementById('llm-key-hint');
+    const urlRow  = document.getElementById('llm-custom-url-row');
     if (modelEl && defaults.model) modelEl.placeholder = defaults.model;
-    if (keyEl)  keyEl.placeholder = defaults.hint || 'API key';
-    if (hintEl && provider === 'custom') hintEl.textContent = 'No API key needed for local server.';
+    if (keyEl) keyEl.placeholder = provider === 'custom' ? 'Bearer token (optional)' : (defaults.hint || 'API key');
+    if (hintEl && provider === 'custom') hintEl.textContent = 'Optional — add if your server requires Bearer token auth.';
     else if (hintEl) hintEl.textContent = 'Saved locally on the server. Never shared.';
+    // Show custom URL field only for custom server
+    if (urlRow) urlRow.style.display = provider === 'custom' ? 'flex' : 'none';
+    if (urlRow) urlRow.style.flexDirection = 'column';
     // Recalculate meter for the new model's context window
     if (typeof updateContextMeter === 'function') updateContextMeter();
 }
@@ -5185,6 +5639,9 @@ async function loadLLMSettings() {
         if (providerEl) providerEl.value = config.provider || 'custom';
         if (modelEl)    modelEl.value    = config.model || config.openai_model || '';
         if (keyEl)      keyEl.placeholder = config.has_api_key ? '••••••••••••••••••••' : (PROVIDER_DEFAULTS[config.provider]?.hint || 'API key');
+        // Restore custom URL if saved
+        const customUrlEl = document.getElementById('llm-custom-url');
+        if (customUrlEl && config.custom_server_url) customUrlEl.value = config.custom_server_url;
         onProviderChange();
     } catch (e) {
         console.error("Failed to load LLM settings", e);
@@ -5199,6 +5656,11 @@ async function saveLLMSettings() {
 
     const data = { provider, model, openai_model: model };
     if (apiKey) { data.api_key = apiKey; data.openai_api_key = apiKey; }
+    // Save custom server URL if provided
+    const customUrlEl = document.getElementById('llm-custom-url');
+    if (provider === 'custom' && customUrlEl && customUrlEl.value.trim()) {
+        data.custom_server_url = customUrlEl.value.trim();
+    }
 
     const statusEl = document.getElementById('llm-status-msg');
 
@@ -5605,3 +6067,45 @@ const _origPushHistory = chatHistory.push.bind(chatHistory);
 
 // Also update meter when chat is loaded from history
 document.addEventListener('chatLoaded', updateContextMeter);
+
+// ======================================================
+// FEATURE 7: CHAT SEARCH
+// ======================================================
+function toggleChatSearch() {
+    const bar = document.getElementById('chat-search-bar');
+    if (!bar) return;
+    const isVisible = bar.style.display !== 'none';
+    bar.style.display = isVisible ? 'none' : 'block';
+    if (!isVisible) {
+        document.getElementById('chat-search-input')?.focus();
+        searchChat(''); // clear highlights
+    }
+}
+
+function searchChat(query) {
+    const contentArea = document.getElementById('ai-content-area');
+    if (!contentArea) return;
+    // Remove existing highlights
+    contentArea.querySelectorAll('.chat-search-highlight').forEach(el => {
+        el.outerHTML = el.textContent;
+    });
+    if (!query.trim()) return;
+    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(escaped, 'gi');
+    let firstMatch = null;
+
+    contentArea.querySelectorAll('.ai-msg').forEach(bubble => {
+        // Only search text nodes — skip elements that contain pill links to avoid corrupting them
+        const body = bubble.querySelector('div:last-child') || bubble;
+        if (body.querySelector('a.notebook-cell-ref')) return; // skip bubbles with jump pills
+
+        const text = body.innerHTML;
+        if (text.toLowerCase().includes(query.toLowerCase())) {
+            body.innerHTML = text.replace(regex,
+                match => `<mark class="chat-search-highlight" style="background:#fef08a;border-radius:2px;">${match}</mark>`
+            );
+            if (!firstMatch) firstMatch = bubble;
+        }
+    });
+    if (firstMatch) firstMatch.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}

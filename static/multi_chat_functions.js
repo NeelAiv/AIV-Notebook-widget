@@ -320,13 +320,14 @@ function renderMessagesFromHistory() {
 
         // Render markdown — strip code blocks that were sent to notebook cells
         let displayContent = assistantMsg.content || '';
-        let cellIndex = 0; // track which code cell this pair maps to
+        // Get the stored cell ID for this message (saved when code was sent to notebook)
+        const storedCellId = assistantMsg._cellId || null;
+        const pairIdx = messagePairs.length;
 
         // Replace ```python...``` blocks with a clickable pill
         displayContent = displayContent.replace(/```(?:python|py)\n[\s\S]*?```/gi, (match) => {
-          const lineCount = match.split('\n').length - 2;
-          const pairIdx = messagePairs.length; // current pair index (0-based)
-          return `\n<a href="#" class="notebook-cell-ref" data-pair-index="${pairIdx}" style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;font-size:0.8rem;color:#4f46e5;text-decoration:none;margin:4px 0;">📓 Cell ${pairIdx + 1} — click to jump</a>\n`;
+          const cellLabel = storedCellId ? storedCellId.replace('cell-', 'Cell ') : `Cell ${pairIdx + 1}`;
+          return `\n<a href="#" class="notebook-cell-ref" data-cell-id="${storedCellId || ''}" data-pair-index="${pairIdx}" style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;font-size:0.8rem;color:#4f46e5;text-decoration:none;margin:4px 0;">📓 ${cellLabel} — click to jump</a>\n`;
         });
 
         // Collapse other code fences (sql, plain, etc.)
@@ -338,7 +339,7 @@ function renderMessagesFromHistory() {
 
         const rawHtml = marked.parse(displayContent);
         // DOMPurify would strip the <a> data attributes, so we inject after sanitize
-        body.innerHTML = DOMPurify.sanitize(rawHtml, { ADD_ATTR: ['data-pair-index'] });
+        body.innerHTML = DOMPurify.sanitize(rawHtml, { ADD_ATTR: ['data-pair-index', 'data-cell-id'] });
 
         assistantBubble.appendChild(header);
         assistantBubble.appendChild(body);
@@ -368,17 +369,34 @@ function renderMessagesFromHistory() {
   contentArea.querySelectorAll('a.notebook-cell-ref').forEach(link => {
     link.addEventListener('click', (e) => {
       e.preventDefault();
+      // Use stored cell ID if available (exact match), else fall back to pair index
+      const cellId = link.dataset.cellId;
       const pairIdx = parseInt(link.dataset.pairIndex, 10);
-      // Try direct cell ID first (cell-1, cell-2, ...)
-      let target = document.getElementById(`cell-${pairIdx + 1}`);
-      // Fallback: Nth .code-cell in #workspace-view
+
+      let target = cellId ? document.getElementById(cellId) : null;
+      if (!target) target = document.getElementById(`cell-${pairIdx + 1}`);
       if (!target) {
         const allCells = document.querySelectorAll('#workspace-view .code-cell');
         target = allCells[pairIdx] || allCells[allCells.length - 1];
       }
       if (target) {
-        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        if (typeof activateCell === 'function') activateCell(target);
+        // Scroll the notebook panel into view first (in case user is on a different view)
+        const workspaceView = document.getElementById('workspace-view');
+        if (workspaceView) workspaceView.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+        // Prefer scrolling to the output div if it has content
+        const cellId = target.id.replace('cell-', '');
+        const outDiv = document.getElementById(`out-${cellId}`);
+        const scrollTarget = (outDiv && outDiv.children.length > 0) ? outDiv : target;
+
+        setTimeout(() => {
+          scrollTarget.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          if (typeof activateCell === 'function') activateCell(target);
+          // Flash highlight on the cell
+          target.style.transition = 'box-shadow 0.3s';
+          target.style.boxShadow = '0 0 0 3px #c7d2fe';
+          setTimeout(() => { target.style.boxShadow = ''; }, 1200);
+        }, 150); // small delay to let workspace scroll settle
       }
     });
   });

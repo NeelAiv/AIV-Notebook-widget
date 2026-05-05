@@ -4078,3 +4078,78 @@ button[id$="-btn"] {
 @keyframes spin {
     to { transform: rotate(360deg); }
 }
+
+/* ======================================================
+   FEATURE 5: Typing Indicator
+   ====================================================== */
+.typing-dots {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+.typing-dots span {
+    width: 6px;
+    height: 6px;
+    background: #94a3b8;
+    border-radius: 50%;
+    animation: typing-bounce 1.2s infinite;
+}
+.typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes typing-bounce {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+    30% { transform: translateY(-6px); opacity: 1; }
+}
+
+/* ======================================================
+   FEATURE 8: Cell Output Collapse
+   ====================================================== */
+.cell-output-wrapper {
+    position: relative;
+}
+
+/* ======================================================
+   STREAMING FIX: constrain chat body so scroll works
+   ====================================================== */
+#ai-response-tray {
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    min-height: 0 !important;
+    max-height: calc(65vh - 140px) !important;
+    flex: 1 !important;
+}
+
+#ai-content-area {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+/* Prompt textarea scroll fix */
+.ai-mini-input {
+    max-height: 120px !important;
+    overflow-y: hidden; /* JS toggles to auto when content exceeds 120px */
+}
+
+/* ======================================================
+   FIX: Input bar always at bottom, tray fills remaining space
+   ====================================================== */
+.ai-mini {
+    display: flex !important;
+    flex-direction: column !important;
+}
+#ai-response-tray {
+    flex: 1 !important;
+    min-height: 0 !important;
+    max-height: none !important; /* let flex handle it, not fixed max-height */
+}
+.ai-input-bar {
+    flex-shrink: 0 !important;
+    margin-top: auto;
+}
+#var-inspector {
+    flex-shrink: 0;
+}
+.ai-suggestion-chips {
+    flex-shrink: 0;
+}

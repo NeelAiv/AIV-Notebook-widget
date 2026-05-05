@@ -1,4 +1,5 @@
 import json
+import re
 import time
 import urllib.parse
 from sqlalchemy import create_engine, text, inspect
@@ -111,7 +112,19 @@ class DBClient:
         active_name = get_active_name()
         print(f"📊 Executing query on database: {active_name}")
 
-        is_select = query.strip().upper().startswith("SELECT")
+        # ── READ-ONLY ENFORCEMENT ──────────────────────────────────────────
+        # Block any SQL that could modify the datasource
+        _WRITE_KEYWORDS = re.compile(
+            r'^\s*(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|REPLACE|MERGE|UPSERT|GRANT|REVOKE|EXEC|EXECUTE|CALL)\b',
+            re.IGNORECASE
+        )
+        if _WRITE_KEYWORDS.match(query.strip()):
+            print(f"🚫 BLOCKED write operation: {query.strip()[:80]}")
+            return [{"Error": "Write operations are not allowed. This tool is read-only."}]
+
+        is_select = query.strip().upper().startswith("SELECT") or \
+                    query.strip().upper().startswith("WITH") or \
+                    query.strip().upper().startswith("EXPLAIN")
 
         # Cache SELECT queries for TTL seconds
         if is_select and not params:
