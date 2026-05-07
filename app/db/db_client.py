@@ -112,6 +112,12 @@ class DBClient:
         active_name = get_active_name()
         print(f"📊 Executing query on database: {active_name}")
 
+        # ── Strip LIMIT from metadata commands that don't support it ─────────────
+        # MySQL: DESCRIBE, SHOW COLUMNS, SHOW TABLES, SHOW DATABASES don't accept LIMIT
+        _meta_cmd = re.match(r'^\s*(DESCRIBE|DESC|SHOW\b)', query.strip(), re.IGNORECASE)
+        if _meta_cmd:
+            query = re.sub(r'\s+LIMIT\s+\d+\s*;?\s*$', '', query.strip(), flags=re.IGNORECASE).strip()
+
         # ── READ-ONLY ENFORCEMENT ──────────────────────────────────────────
         # Block any SQL that could modify the datasource
         _WRITE_KEYWORDS = re.compile(
