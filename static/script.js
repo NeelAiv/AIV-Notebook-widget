@@ -1317,6 +1317,89 @@ function updateLastActiveCell(cellId, newCode) {
     }
 }
 
+// ── FuncAnimation → Plotly frames converter ───────────────────────────────
+// Called automatically when user pastes matplotlib FuncAnimation code into a cell.
+// Extracts the update function and generates equivalent Plotly frames-based animation.
+function convertFuncAnimationToPlotly(code) {
+    // Try to extract key parameters from the FuncAnimation call
+    const framesMatch = code.match(/frames\s*=\s*(\d+)/);
+    const intervalMatch = code.match(/interval\s*=\s*(\d+)/);
+    const nFrames = framesMatch ? parseInt(framesMatch[1]) : 60;
+    const interval = intervalMatch ? parseInt(intervalMatch[1]) : 50;
+
+    // Try to detect what kind of animation it is by looking at the update function
+    // Look for common patterns: sin/cos wave, scatter, bar, etc.
+    const hasSin = /np\.sin/.test(code);
+    const hasCos = /np\.cos/.test(code);
+    const hasLinspace = /np\.linspace/.test(code);
+
+    // Extract x range from linspace if present
+    const linspaceMatch = code.match(/np\.linspace\s*\(\s*([\d.*\s\w]+?)\s*,\s*([\d.*\s\w]+?)\s*,\s*(\d+)/);
+    const xStart = linspaceMatch ? linspaceMatch[1].trim().replace(/\bnp\b/g, '_np_anim') : '0';
+    const xEnd = linspaceMatch ? linspaceMatch[2].trim().replace(/\bnp\b/g, '_np_anim') : '6.28';
+    const xPoints = linspaceMatch ? parseInt(linspaceMatch[3]) : 200;
+
+    // Extract title if set
+    const titleMatch = code.match(/set_title\s*\(\s*["']([^"']+)["']/);
+    const title = titleMatch ? titleMatch[1] : 'Animation';
+    const xlabelMatch = code.match(/set_xlabel\s*\(\s*["']([^"']+)["']/);
+    const ylabelMatch = code.match(/set_ylabel\s*\(\s*["']([^"']+)["']/);
+    const xlabel = xlabelMatch ? xlabelMatch[1] : 'X';
+    const ylabel = ylabelMatch ? ylabelMatch[1] : 'Y';
+
+    // Extract ylim if set
+    const ylimMatch = code.match(/set_ylim\s*\(\s*([-\d.]+)\s*,\s*([-\d.]+)/);
+    const yMin = ylimMatch ? ylimMatch[1] : '-1.5';
+    const yMax = ylimMatch ? ylimMatch[2] : '1.5';
+
+    // Build the wave expression from the update function
+    // Look for patterns like: np.sin(x + frame/10), np.cos(x - frame/20), etc.
+    let waveExpr = 'np.sin(x + frame / 10)';
+    const updateFnMatch = code.match(/def\s+update\s*\([^)]*\)[\s\S]*?(?=\ndef\s|\nani\s*=|\Z)/);
+    if (updateFnMatch) {
+        const updateBody = updateFnMatch[0];
+        const exprMatch = updateBody.match(/y\s*=\s*(np\.[^\n]+)/);
+        if (exprMatch) {
+            waveExpr = exprMatch[1].trim();
+        }
+    }
+
+    const plotlyCode = `# ⚠️ FuncAnimation was auto-converted to Plotly (matplotlib animations don't work in Pyodide)
+# Original: ${nFrames} frames @ ${interval}ms interval — Play/Pause button is injected automatically
+import numpy as _np_anim
+
+_x = _np_anim.linspace(${xStart}, ${xEnd}, ${Math.min(xPoints, 300)})
+_frames = []
+for frame in range(${Math.min(nFrames, 150)}):
+    _y = ${waveExpr.replace(/\bnp\b/g, '_np_anim').replace(/\bx\b/g, '_x')}
+    _frames.append(go.Frame(
+        data=[go.Scatter(x=_x.tolist(), y=_y.tolist(), mode='lines', line=dict(color='#667eea', width=2))],
+        name=str(frame)
+    ))
+
+_y0 = ${waveExpr.replace(/\bnp\b/g, '_np_anim').replace(/\bx\b/g, '_x').replace(/\bframe\b/g, '0')}
+fig = go.Figure(
+    data=[go.Scatter(
+        x=_x.tolist(),
+        y=_y0.tolist(),
+        mode='lines',
+        line=dict(color='#667eea', width=2)
+    )],
+    layout=go.Layout(
+        title='${title}',
+        xaxis=dict(title='${xlabel}', range=[${xStart}, ${xEnd}]),
+        yaxis=dict(title='${ylabel}', range=[${yMin}, ${yMax}]),
+        template='plotly_white',
+        height=450,
+        margin=dict(t=50, l=60, r=20, b=80)
+    ),
+    frames=_frames
+)
+fig`;
+
+    return plotlyCode;
+}
+
 async function runCode(id) {
     lastActiveCellId = id;
     const codeEditor = document.querySelector(`#cell-${id} .code-editor`);
@@ -1350,6 +1433,14 @@ async function runCode(id) {
     // fig.show() → fig  (so the figure is returned as the cell's last expression)
     code = code.replace(/^(\s*)fig\.show\s*\(\s*\)\s*$/gm, '$1fig  # fig.show() — rendered automatically');
     code = code.replace(/^(\s*)plt\.show\s*\(\s*\)\s*$/gm, '$1# plt.show() — rendered automatically');
+
+    // ── FuncAnimation interceptor ─────────────────────────────────────────────
+    // matplotlib.animation.FuncAnimation does not work in Pyodide (no display loop).
+    // Detect it and auto-convert to a Plotly frames-based animation so the user
+    // gets a working Play button instead of a blank output.
+    if (/FuncAnimation/.test(code)) {
+        code = convertFuncAnimationToPlotly(code);
+    }
 
     const _cellStartTime = Date.now();
     btn.innerHTML = ICON_LOADER;
@@ -1448,9 +1539,118 @@ async function runCode(id) {
                     plotDiv.style.height = "450px";
                     outDiv.appendChild(plotDiv);
                     if (typeof Plotly !== 'undefined') {
+                        const hasFrames = cleanFig.frames && cleanFig.frames.length > 0;
+
+                        if (hasFrames) {
+                            const layout = cleanFig.layout || {};
+
+                            // Remove any Plotly-native updatemenus — we use a custom HTML button instead
+                            layout.updatemenus = [];
+
+                            // Slider: no currentvalue label (it overlaps x-axis title), clean track only
+                            if (!layout.sliders || layout.sliders.length === 0) {
+                                const frameNames = cleanFig.frames.map((f, i) => f.name || String(i));
+                                layout.sliders = [{
+                                    pad: { l: 0, t: 4, r: 0, b: 0 },
+                                    len: 1.0,
+                                    x: 0,
+                                    y: -0.08,
+                                    currentvalue: { visible: false },
+                                    transition: { duration: 0 },
+                                    steps: frameNames.map(name => ({
+                                        label: '',
+                                        method: 'animate',
+                                        args: [[name], {
+                                            mode: 'immediate',
+                                            transition: { duration: 0 },
+                                            frame: { duration: 50, redraw: true }
+                                        }]
+                                    }))
+                                }];
+                            }
+
+                            cleanFig.layout = layout;
+                            // Enough bottom margin for slider track only (no label, no Plotly buttons)
+                            cleanFig.layout.margin = Object.assign(
+                                { t: 50, l: 60, r: 20, b: 80 },
+                                cleanFig.layout.margin || {}
+                            );
+                            plotDiv.style.height = '460px';
+                        }
+
                         Plotly.newPlot(plotDiv, cleanFig.data, cleanFig.layout, {responsive: true});
+
+                        if (hasFrames) {
+                            Plotly.addFrames(plotDiv, cleanFig.frames);
+
+                            // ── Custom Play/Pause toggle button + frame counter ──────────────
+                            const frameDuration = 50;
+                            const totalFrames = cleanFig.frames.length;
+                            let isPlaying = false;
+
+                            const controlBar = document.createElement('div');
+                            controlBar.style.cssText = 'display:flex;align-items:center;gap:10px;padding:6px 4px 2px 4px;';
+
+                            const playBtn = document.createElement('button');
+                            playBtn.innerHTML = '▶ Play';
+                            playBtn.style.cssText = [
+                                'display:inline-flex', 'align-items:center', 'gap:6px',
+                                'padding:5px 16px', 'border-radius:6px', 'border:1px solid #cbd5e1',
+                                'background:#f8fafc', 'color:#1e293b', 'font-size:0.82rem',
+                                'font-weight:500', 'cursor:pointer', 'transition:background 0.15s',
+                                'min-width:90px', 'justify-content:center'
+                            ].join(';');
+                            playBtn.onmouseenter = () => { playBtn.style.background = '#e2e8f0'; };
+                            playBtn.onmouseleave = () => { playBtn.style.background = isPlaying ? '#e2e8f0' : '#f8fafc'; };
+
+                            const frameLabel = document.createElement('span');
+                            frameLabel.style.cssText = 'font-size:0.75rem;color:#94a3b8;font-variant-numeric:tabular-nums;';
+                            frameLabel.textContent = 'Frame 0 / ' + (totalFrames - 1);
+
+                            // Track frame changes via Plotly's plotly_animatingframe event
+                            plotDiv.on('plotly_animatingframe', (e) => {
+                                const idx = e.frame ? cleanFig.frames.findIndex(f => f.name === e.frame.name) : 0;
+                                frameLabel.textContent = 'Frame ' + (idx >= 0 ? idx : 0) + ' / ' + (totalFrames - 1);
+                            });
+                            plotDiv.on('plotly_animated', () => {
+                                // Animation finished (reached last frame)
+                                isPlaying = false;
+                                playBtn.innerHTML = '▶ Play';
+                                playBtn.style.background = '#f8fafc';
+                                frameLabel.textContent = 'Frame ' + (totalFrames - 1) + ' / ' + (totalFrames - 1);
+                            });
+
+                            playBtn.onclick = () => {
+                                if (isPlaying) {
+                                    // Pause
+                                    Plotly.animate(plotDiv, [null], {
+                                        mode: 'immediate',
+                                        transition: { duration: 0 },
+                                        frame: { duration: 0, redraw: false }
+                                    });
+                                    isPlaying = false;
+                                    playBtn.innerHTML = '▶ Play';
+                                    playBtn.style.background = '#f8fafc';
+                                } else {
+                                    // Play
+                                    Plotly.animate(plotDiv, null, {
+                                        fromcurrent: true,
+                                        transition: { duration: 0 },
+                                        frame: { duration: frameDuration, redraw: true }
+                                    });
+                                    isPlaying = true;
+                                    playBtn.innerHTML = '⏸ Pause';
+                                    playBtn.style.background = '#e2e8f0';
+                                }
+                            };
+
+                            controlBar.appendChild(playBtn);
+                            controlBar.appendChild(frameLabel);
+                            outDiv.appendChild(controlBar);
+                        }
+
                         rendered = true;
-                        console.log('✅ Plotly rendered via to_json');
+                        console.log('✅ Plotly rendered via to_json' + (hasFrames ? ' (with animation frames)' : ''));
                     }
                 } catch (e) {
                     console.error('❌ Plotly to_json error:', e);

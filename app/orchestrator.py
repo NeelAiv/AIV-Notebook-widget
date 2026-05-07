@@ -50,9 +50,9 @@ PYODIDE_PRE_INJECTED_VARS = {
 PYODIDE_SYSTEM_CONTEXT = (
     "ENVIRONMENT: Pyodide â€” Python in a WebAssembly browser sandbox.\n"
     "ALREADY IN SCOPE (never re-import): np=numpy  pd=pandas  plt=matplotlib.pyplot  query_db=async-DB-fn  micropip  go=plotly.graph_objects  px=plotly.express  pio=plotly.io  make_subplots=plotly.subplots.make_subplots.\n"
-    "SAFE IMPORTS: json re math random datetime io base64 os(read-only) mpl_toolkits.mplot3d matplotlib.animation.\n"
+    "SAFE IMPORTS: json re math random datetime io base64 os(read-only) mpl_toolkits.mplot3d.\n"
     "MICROPIP PACKAGES (await install before import): scikit-learn scipy seaborn pillow networkx.\n"
-    "FORBIDDEN (will crash kernel): subprocess threading multiprocessing socket tkinter PyQt5 torch tensorflow cv2 open(local_path) pip-install.\n"
+    "FORBIDDEN (will crash kernel): subprocess threading multiprocessing socket tkinter PyQt5 torch tensorflow cv2 open(local_path) pip-install matplotlib.animation FuncAnimation plt.show() fig.show().\n"
     "\n"
     "MANDATORY PYODIDE COMPATIBILITY RULES:\n"
     "1. NEVER import micropip - it's already available in scope\n"
@@ -150,6 +150,32 @@ PYODIDE_SYSTEM_CONTEXT = (
     ")\n"
     "fig.update_layout(title='Title', xaxis_title='Date', yaxis_title='Metric', hovermode='x unified', template='plotly_white', height=400)\n"
     "fig  # <-- OUTSIDE all conditionals\n"
+    "\n"
+    "PLOTLY TEMPLATE \u2014 ANIMATION (use for animated/time-lapse charts, NEVER use matplotlib FuncAnimation):\n"
+    "CRITICAL: matplotlib.animation.FuncAnimation DOES NOT WORK in Pyodide. ALWAYS use Plotly frames instead.\n"
+    "import pandas as _pd\n"
+    "df = await query_db(\"SELECT time_col, label_col, metric_col FROM table ORDER BY time_col\")\n"
+    "for _c in df.columns:\n"
+    "    try: df[_c] = _pd.to_numeric(df[_c], errors='raise')\n"
+    "    except: pass\n"
+    "time_steps = sorted(df['time_col'].unique().tolist())\n"
+    "frames = [go.Frame(\n"
+    "    data=[go.Bar(x=df[df['time_col']==t]['label_col'].tolist(), y=df[df['time_col']==t]['metric_col'].tolist())],\n"
+    "    name=str(t)\n"
+    ") for t in time_steps]\n"
+    "fig = go.Figure(\n"
+    "    data=[go.Bar(x=df[df['time_col']==time_steps[0]]['label_col'].tolist(), y=df[df['time_col']==time_steps[0]]['metric_col'].tolist())],\n"
+    "    layout=go.Layout(\n"
+    "        title='Animated Chart',\n"
+    "        template='plotly_white',\n"
+    "        height=500,\n"
+    "        margin=dict(t=50, l=60, r=20, b=80),\n"
+    "        updatemenus=[]  # Play/Pause button is injected automatically by the notebook renderer\n"
+    "    ),\n"
+    "    ),\n"
+    "    frames=frames\n"
+    ")\n"
+    "fig  # <-- OUTSIDE all conditionals\n"
 )
 
 class IncidentOrchestrator:
@@ -245,6 +271,10 @@ class IncidentOrchestrator:
             if any(re.match(p, stripped) for p in _SILENT_DROP_PATTERNS):
                 continue  
 
+            # Block matplotlib.animation imports and FuncAnimation usage
+            if re.search(r'\bmatplotlib\.animation\b', stripped) or re.search(r'\bFuncAnimation\b', stripped):
+                sanitized.append('# ❌ BLOCKED: matplotlib.animation.FuncAnimation does not work in Pyodide — use Plotly frames-based animation instead')
+                continue
 
             forbidden_match = re.match(r'^(?:import|from)\s+(\w+)', stripped)
             if forbidden_match:
@@ -1256,17 +1286,7 @@ fig'''
             "You are a Data Analyst Agent in a Pyodide notebook. EVERY code you generate MUST be Pyodide-compatible.\n\n"
             f"{no_db_notice}"
             f"{no_rag_notice}"
-            "CRITICAL PYODIDE RULES (ALWAYS FOLLOW):\n"
-            "- NEVER import micropip - it's already available\n"
-            "- NEVER import plotly, plotly.graph_objects, or plotly.express — go and px are already in scope\n"
-            "- NEVER use f-strings with formatting ({:,}, {:.2f}) - use string concatenation instead\n"
-            "- fig.show() is a no-op — the notebook renderer handles display automatically\n"
-            "- ALWAYS end with 'fig' on its own line outside all conditionals\n"
-            "- NEVER use pd.read_excel() - use pd.read_csv(io.StringIO(dataset_string))\n"
-            "- ALWAYS use await for async operations (query_db, micropip.install)\n"
-            "- CRITICAL: The LAST LINE must be OUTSIDE all conditionals (if/else/for/while) - this is how Pyodide displays output\n"
-            "- SQL STRINGS: ALWAYS use double-quotes for query_db() â€” query_db(\"SELECT...\") or query_db(\"\"\"SELECT...\"\"\")\n"
-            "  NEVER use triple-single-quotes when SQL contains single-quoted values â€” it causes SyntaxError\n\n"
+            f"{PYODIDE_SYSTEM_CONTEXT}\n"
             "CELL CONTEXT:\n"
             "- Each cell has an ID like [cell-1], [cell-2], etc.\n"
             "- When user says 'this cell', 'current cell', 'that code', they mean the ACTIVE CELL\n"
@@ -1750,6 +1770,7 @@ fig'''
         system_msg = (
             "You are a Data Analyst Agent in a Pyodide notebook.\n\n"
             f"{no_db}{no_rag}"
+            f"{PYODIDE_SYSTEM_CONTEXT}\n\n"
             "TOOL USAGE:\n"
             "0. Answer directly (no tool) for: greetings, yes/no questions about existing cells/charts, schema questions already in context, follow-ups, corrections.\n"
             "   EXAMPLES: 'is the chart showing 10 items?' ’ read cell code, answer yes/no. 'is this correct?' ’ evaluate and explain.\n"
