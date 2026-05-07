@@ -1073,6 +1073,12 @@ async function initPyodide() {
 
         await pyodide.loadPackage(["micropip", "numpy", "pandas", "matplotlib"]);
 
+        // Pre-install plotly so first chart run doesn't need micropip.install
+        await pyodide.runPythonAsync(`
+            import micropip
+            await micropip.install('plotly')
+        `);
+
         // 2. Setup Environment & Helpers
 
         await pyodide.runPythonAsync(`
@@ -1098,6 +1104,28 @@ async function initPyodide() {
             def no_op_show(*args, **kwargs): pass
 
             plt.show = no_op_show
+
+            # Patch plotly's show() to a no-op — sockets are not available in Pyodide
+            # This must be done at the renderer level so fig.show() silently does nothing
+            try:
+                import plotly.io as _pio
+                import plotly.io._renderers as _renderers
+
+                class _NoOpRenderer:
+                    def render(self, *a, **kw): pass
+
+                _pio.renderers.default = 'browser'
+                _pio.renderers['browser'] = _NoOpRenderer()
+
+                # Also patch Figure.__repr__ so print(fig) shows a clean summary
+                from plotly.basedatatypes import BaseFigure as _BaseFigure
+                def _fig_repr(self):
+                    n_traces = len(self.data)
+                    title = self.layout.title.text if self.layout.title.text else '(no title)'
+                    return '[Plotly Figure: ' + str(n_traces) + ' trace(s), title="' + str(title) + '"]'
+                _BaseFigure.__repr__ = _fig_repr
+            except Exception:
+                pass
  
             # --- DB BRIDGE ---
 
@@ -1153,6 +1181,32 @@ async function initPyodide() {
             user_ns['plt'] = plt
 
             user_ns['query_db'] = query_db
+
+            import plotly.graph_objects as go
+            user_ns['go'] = go
+
+            import plotly.express as px
+            user_ns['px'] = px
+
+            # Pre-import mpl_toolkits for 3D plots
+            try:
+                from mpl_toolkits.mplot3d import Axes3D as _Axes3D
+                user_ns['Axes3D'] = _Axes3D
+            except Exception:
+                pass
+
+            # Configure Plotly to use plain JSON serialization (not binary numpy encoding)
+            # This ensures all chart data renders correctly in the browser
+            try:
+                import plotly.io as pio
+                # Force JSON engine so numpy arrays serialize as plain lists, not bdata/dtype
+                pio.json.config.default_engine = 'json'
+                # Also make plotly.subplots available
+                from plotly.subplots import make_subplots as _make_subplots
+                user_ns['make_subplots'] = _make_subplots
+                user_ns['pio'] = pio
+            except Exception:
+                pass
  
             # --- HELPER: Extracts Plots ---
 
@@ -1280,6 +1334,23 @@ async function runCode(id) {
     const btn = document.getElementById(`btn-${id}`);
     if (!pyodide) { outDiv.innerText = "⚠️ Kernel loading..."; return; }
 
+    // Strip show() calls — sockets not available in Pyodide WebAssembly
+    // For pio.show(var) — extract the variable and leave it as the return expression
+    code = code.replace(/^(\s*)pio\.show\s*\(([^)]+)\)\s*$/gm, (match, indent, arg) => {
+        const varName = arg.trim();
+        // If it's a simple variable name, return it so the notebook renders it
+        if (/^\w+$/.test(varName)) return `${indent}${varName}  # pio.show() — rendered automatically`;
+        return `${indent}# pio.show() — rendered automatically`;
+    });
+    code = code.replace(/^(\s*)plotly\.io\.show\s*\(([^)]+)\)\s*$/gm, (match, indent, arg) => {
+        const varName = arg.trim();
+        if (/^\w+$/.test(varName)) return `${indent}${varName}  # plotly.io.show() — rendered automatically`;
+        return `${indent}# plotly.io.show() — rendered automatically`;
+    });
+    // fig.show() → fig  (so the figure is returned as the cell's last expression)
+    code = code.replace(/^(\s*)fig\.show\s*\(\s*\)\s*$/gm, '$1fig  # fig.show() — rendered automatically');
+    code = code.replace(/^(\s*)plt\.show\s*\(\s*\)\s*$/gm, '$1# plt.show() — rendered automatically');
+
     const _cellStartTime = Date.now();
     btn.innerHTML = ICON_LOADER;
     outDiv.innerHTML = ""; // Clear output
@@ -1335,88 +1406,121 @@ async function runCode(id) {
 
             let rendered = false;
 
-            // Try _repr_html_ first — works for both Plotly figures and DataFrames
-            if (!rendered && result._repr_html_) {
-                try {
-                    const htmlContent = result._repr_html_();
-
-                    // Detect if it's a Plotly figure (contains plotly JS)
-                    const isPlotly = htmlContent.includes('plotly') || htmlContent.includes('Plotly');
-
-                    if (isPlotly) {
-                        const div = document.createElement("div");
-                        div.style.width = "100%";
-                        div.innerHTML = htmlContent;
-                        outDiv.appendChild(div);
-                        // Execute any inline scripts (Plotly needs this)
-                        div.querySelectorAll('script').forEach(oldScript => {
-                            const newScript = document.createElement('script');
-                            newScript.textContent = oldScript.textContent;
-                            oldScript.parentNode.replaceChild(newScript, oldScript);
-                        });
-                        rendered = true;
-                        console.log('✅ Plotly rendered via _repr_html_');
-                    } else {
-                        // DataFrame or other HTML — extract table if present
-                        const tableMatch = htmlContent.match(/<table[\s\S]*?<\/table>/);
-                        const tableHtml = tableMatch ? tableMatch[0] : htmlContent;
-                        const div = document.createElement("div");
-                        div.innerHTML = tableHtml;
-                        div.style.overflowX = "auto";
-                        div.style.maxWidth = "100%";
-
-                        const table = div.querySelector('table');
-                        if (table) {
-                            table.style.borderCollapse = 'collapse';
-                            table.style.width = '100%';
-                            table.style.fontSize = '0.9rem';
-                            table.style.fontFamily = "system-ui, -apple-system, sans-serif";
-                            table.style.border = '1px solid #d1d5db';
-                            table.querySelectorAll('th').forEach(th => {
-                                th.style.background = '#f3f4f6';
-                                th.style.color = '#1f2937';
-                                th.style.padding = '10px 12px';
-                                th.style.textAlign = 'left';
-                                th.style.fontWeight = '600';
-                                th.style.borderBottom = '2px solid #d1d5db';
-                                th.style.fontSize = '0.85rem';
-                            });
-                            table.querySelectorAll('td').forEach(td => {
-                                td.style.padding = '8px 12px';
-                                td.style.borderBottom = '1px solid #e5e7eb';
-                                td.style.color = '#374151';
-                            });
-                            outDiv.appendChild(div);
-                            rendered = true;
-                            console.log('✅ DataFrame rendered via _repr_html_');
-                        } else if (htmlContent.trim()) {
-                            // Generic HTML output
-                            const div2 = document.createElement("div");
-                            div2.innerHTML = htmlContent;
-                            outDiv.appendChild(div2);
-                            rendered = true;
-                        }
-                    }
-                } catch (e) {
-                    console.error('❌ _repr_html_ render error:', e);
-                }
-            }
-
-            // Fallback: try Plotly.js directly via to_json
+            // For Plotly figures: skip _repr_html_ (it embeds a CDN script that won't load
+            // inside innerHTML) and go straight to to_json + the already-loaded Plotly.js on the page.
             if (!rendered && result.to_json) {
                 try {
                     const figObj = JSON.parse(result.to_json());
+
+                    // Decode Plotly's binary-encoded arrays (bdata/dtype format from numpy)
+                    // These appear when px uses numpy arrays internally — Plotly.js can't decode them
+                    const decodeBinaryArrays = (obj) => {
+                        if (Array.isArray(obj)) return obj.map(decodeBinaryArrays);
+                        if (obj && typeof obj === 'object') {
+                            if (obj.bdata !== undefined && obj.dtype !== undefined) {
+                                // Decode base64 → typed array → plain JS array
+                                try {
+                                    const raw = atob(obj.bdata);
+                                    const bytes = new Uint8Array(raw.length);
+                                    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+                                    const dtypeMap = {
+                                        'f4': Float32Array, 'f8': Float64Array,
+                                        'i1': Int8Array,    'i2': Int16Array,
+                                        'i4': Int32Array,   'u1': Uint8Array,
+                                        'u2': Uint16Array,  'u4': Uint32Array,
+                                    };
+                                    const TypedArr = dtypeMap[obj.dtype];
+                                    if (TypedArr) {
+                                        return Array.from(new TypedArr(bytes.buffer));
+                                    }
+                                } catch(e) {}
+                            }
+                            const out = {};
+                            for (const k of Object.keys(obj)) out[k] = decodeBinaryArrays(obj[k]);
+                            return out;
+                        }
+                        return obj;
+                    };
+
+                    const cleanFig = decodeBinaryArrays(figObj);
                     const plotDiv = document.createElement("div");
                     plotDiv.style.width = "100%";
                     plotDiv.style.height = "450px";
                     outDiv.appendChild(plotDiv);
                     if (typeof Plotly !== 'undefined') {
-                        Plotly.newPlot(plotDiv, figObj.data, figObj.layout, {responsive: true});
+                        Plotly.newPlot(plotDiv, cleanFig.data, cleanFig.layout, {responsive: true});
                         rendered = true;
-                        console.log('✅ Plotly rendered via to_json fallback');
+                        console.log('✅ Plotly rendered via to_json');
                     }
                 } catch (e) {
-                    console.error('❌ Plotly to_json fallback error:', e);
+                    console.error('❌ Plotly to_json error:', e);
+                }
+            }
+
+            // Handle plain Python dict that looks like a Plotly figure spec {data: [...], layout: {...}}
+            if (!rendered && result.type === 'dict') {
+                try {
+                    const dictObj = result.toJs({ dict_converter: Object.fromEntries });
+                    if (dictObj && dictObj.data && typeof Plotly !== 'undefined') {
+                        const plotDiv = document.createElement("div");
+                        plotDiv.style.width = "100%";
+                        plotDiv.style.height = "450px";
+                        outDiv.appendChild(plotDiv);
+                        Plotly.newPlot(plotDiv, dictObj.data, dictObj.layout || {}, {responsive: true});
+                        rendered = true;
+                        console.log('✅ Plotly rendered via dict spec');
+                    }
+                } catch (e) {
+                    console.error('❌ Plotly dict render error:', e);
+                }
+            }
+
+            // Try _repr_html_ for DataFrames and other HTML-representable objects
+            if (!rendered && result._repr_html_) {
+                try {
+                    const htmlContent = result._repr_html_();
+
+                    // DataFrame or other HTML — extract table if present
+                    const tableMatch = htmlContent.match(/<table[\s\S]*?<\/table>/);
+                    const tableHtml = tableMatch ? tableMatch[0] : htmlContent;
+                    const div = document.createElement("div");
+                    div.innerHTML = tableHtml;
+                    div.style.overflowX = "auto";
+                    div.style.maxWidth = "100%";
+
+                    const table = div.querySelector('table');
+                    if (table) {
+                        table.style.borderCollapse = 'collapse';
+                        table.style.width = '100%';
+                        table.style.fontSize = '0.9rem';
+                        table.style.fontFamily = "system-ui, -apple-system, sans-serif";
+                        table.style.border = '1px solid #d1d5db';
+                        table.querySelectorAll('th').forEach(th => {
+                            th.style.background = '#f3f4f6';
+                            th.style.color = '#1f2937';
+                            th.style.padding = '10px 12px';
+                            th.style.textAlign = 'left';
+                            th.style.fontWeight = '600';
+                            th.style.borderBottom = '2px solid #d1d5db';
+                            th.style.fontSize = '0.85rem';
+                        });
+                        table.querySelectorAll('td').forEach(td => {
+                            td.style.padding = '8px 12px';
+                            td.style.borderBottom = '1px solid #e5e7eb';
+                            td.style.color = '#374151';
+                        });
+                        outDiv.appendChild(div);
+                        rendered = true;
+                        console.log('✅ DataFrame rendered via _repr_html_');
+                    } else if (htmlContent.trim()) {
+                        // Generic HTML output
+                        const div2 = document.createElement("div");
+                        div2.innerHTML = htmlContent;
+                        outDiv.appendChild(div2);
+                        rendered = true;
+                    }
+                } catch (e) {
+                    console.error('❌ _repr_html_ render error:', e);
                 }
             }
 
@@ -2165,7 +2269,7 @@ async function runEditedQuery(prompt, messageIndex) {
     assistantBubble.style.border = '1px solid #e6edf3';
     assistantBubble.style.borderRadius = '10px';
     assistantBubble.style.margin = '6px 0'; // Tighter
-    assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><strong style="font-size:0.9rem;">Assistant</strong></div><div style="margin-top:10px;"><div class="typing-dots"><span></span><span></span><span></span></div></div>`;
+    assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><strong style="font-size:0.9rem;">Assistant</strong></div><div style="margin-top:10px;display:flex;align-items:center;gap:6px;"><div class="typing-dots"><span></span><span></span><span></span></div><span class="thinking-label">Thinking…</span></div>`;
     assistantBubble.querySelector('div').appendChild(timerEl);
     contentArea.appendChild(assistantBubble);
 
@@ -2540,7 +2644,7 @@ async function runAIQuery() {
     assistantBubble.style.border = '1px solid #e6edf3';
     assistantBubble.style.borderRadius = '10px';
     assistantBubble.style.margin = '6px 0'; // Tightened vertical margins
-    assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><strong style="font-size:0.9rem;">Assistant</strong></div><div style="margin-top:10px;"><div class="typing-dots"><span></span><span></span><span></span></div></div>`;
+    assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><strong style="font-size:0.9rem;">Assistant</strong></div><div style="margin-top:10px;display:flex;align-items:center;gap:6px;"><div class="typing-dots"><span></span><span></span><span></span></div><span class="thinking-label">Thinking…</span></div>`;
     // add timer to the header
     assistantBubble.querySelector('div').appendChild(timerEl);
     contentArea.appendChild(assistantBubble);
@@ -2707,7 +2811,7 @@ async function runAIQuery() {
             } else {
                 // Strip the code block from the streamed text so it doesn't double-render
                 answer = originalAnswer.replace(codeMatch[0], "").trim();
-                if (!answer) answer = "I've generated the following code based on your request:";
+                if (!answer) answer = "Here's the chart — you can ask me to change the chart type, filter the data, or add more detail.";
 
                 try {
                     codeNode = stageCodeProposalUI(code, prompt);
@@ -4665,8 +4769,7 @@ function duplicateCell(cell) {
     let code = '';
     const editor = getCodeEditorFromCell(cell);
     if (editor) {
-        const cm = editor.nextSibling?.CodeMirror;
-        code = cm ? cm.getValue() : editor.value;
+        code = getCodeFromEditor(editor);
     }
 
     if (isText) {
@@ -4708,8 +4811,7 @@ function duplicateCell(cell) {
 function copyCellCode(cell) {
     const editor = getCodeEditorFromCell(cell);
     if (!editor) return;
-    const cm = editor.nextSibling?.CodeMirror;
-    const code = cm ? cm.getValue() : editor.value;
+    const code = getCodeFromEditor(editor);
     navigator.clipboard.writeText(code).then(() => showToast('Code copied to clipboard', 'success', 1500));
 }
 
@@ -4766,7 +4868,7 @@ function convertCellType(cell) {
         // Code → Text
         cell.classList.add('text-cell');
         const editor = getCodeEditorFromCell(cell);
-        const code = editor ? (editor.nextSibling?.CodeMirror?.getValue() || editor.value) : '';
+        const code = editor ? getCodeFromEditor(editor) : '';
         cell.innerHTML = `
             <div class="cell-controls"><button title="Move Up" onclick="event.stopPropagation();moveCellUp(this)">${ICON_MOVE_UP}</button><button title="Move Down" onclick="event.stopPropagation();moveCellDown(this)">${ICON_MOVE_DOWN}</button><button title="Delete" onclick="event.stopPropagation();deleteCell(this)">${ICON_DELETE}</button><button title="More" onclick="event.stopPropagation();moreOptions(this)">${ICON_MORE}</button></div>
             <div class="cell-content-part"><div class="text-editor" contenteditable="false" ondblclick="enableTextEdit(this)">${code}</div></div>`;
@@ -4819,10 +4921,13 @@ function moveCellDown(button) {
         const parent = currentCell.parentNode;
 
         if (nextCell && nextCell.classList.contains('code-cell')) {
-            // 2. Insert the NEXT cell before the CURRENT cell (effectively swapping)
+            // 2. The bar that belongs to nextCell is the one after it
+            const nextBar = nextCell.nextElementSibling;
+
+            // 3. Insert the NEXT cell before the CURRENT cell (effectively swapping)
             parent.insertBefore(nextCell, currentCell);
 
-            // 3. Move the NEXT cell's bar along with it
+            // 4. Move the NEXT cell's bar along with it
             if (nextBar && nextBar.classList.contains('add-cell-bar')) {
                 parent.insertBefore(nextBar, currentCell);
             }

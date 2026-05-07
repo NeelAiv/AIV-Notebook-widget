@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, JSONResponse
 from fastapi import UploadFile, File
 import uvicorn
 import sys
@@ -8,6 +8,8 @@ import os
 import json
 from io import StringIO
 import datetime
+import decimal
+import math
 import nbformat
 import base64
 from nbformat.v4 import new_notebook, new_code_cell, new_markdown_cell, new_output
@@ -22,6 +24,29 @@ from app.utils.file_parser import extract_text_from_file, is_structured_file, is
 from app.utils.logger import info, error, warning
 
 app = FastAPI(title="InsightEdge AI Notebook")
+
+# ---------------------------------------------------------------------------
+# Custom JSON serializer — handles Decimal, datetime, date, UUID, NaN/Inf
+# that FastAPI's default encoder cannot serialize.
+# ---------------------------------------------------------------------------
+def _json_serial(obj):
+    """Fallback serializer for types not handled by the default JSON encoder."""
+    if isinstance(obj, decimal.Decimal):
+        # Preserve full precision; return as float (NaN/Inf → null)
+        f = float(obj)
+        if math.isnan(f) or math.isinf(f):
+            return None
+        return f
+    if isinstance(obj, (datetime.datetime, datetime.date, datetime.time)):
+        return obj.isoformat()
+    if hasattr(obj, '__str__'):
+        return str(obj)
+    raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+
+
+def safe_jsonify(data) -> JSONResponse:
+    """Serialize data to a JSONResponse, safely handling Decimal/datetime/etc."""
+    return JSONResponse(content=json.loads(json.dumps(data, default=_json_serial)))
 
 # ---------------------------------------------------------------------------
 # Helper: get the per-session orchestrator from the X-Session-ID header
@@ -617,7 +642,7 @@ async def execute_sql_bridge(req: Request):
         orchestrator = get_orchestrator(req)
         results = orchestrator.db.execute_query(sql_query)
 
-        return {"status": "success", "data": results}
+        return safe_jsonify({"status": "success", "data": results})
 
     except Exception as e:
 
