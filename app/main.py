@@ -21,7 +21,7 @@ from nbformat.v4 import new_notebook, new_code_cell, new_markdown_cell, new_outp
 # Custom Modules - Ensure these exist in app/db/
 from app.db import config_manager, history_manager
 from app.orchestrator import IncidentOrchestrator
-from app.session_manager import session_manager
+from app.session_manager import orchestrator as global_orchestrator
 from app.request_models import QueryRequest
 from app.utils.file_parser import extract_text_from_file, is_structured_file, is_unstructured_file, extract_structured_metadata
 from app.utils.logger import info, error, warning
@@ -52,12 +52,11 @@ def safe_jsonify(data) -> JSONResponse:
     return JSONResponse(content=json.loads(json.dumps(data, default=_json_serial)))
 
 # ---------------------------------------------------------------------------
-# Helper: get the per-session orchestrator from the X-Session-ID header
-# Falls back to a shared "default" session if no header is present.
+# Helper: get the global orchestrator.
+# The app now uses a single shared orchestrator per deployment.
 # ---------------------------------------------------------------------------
-def get_orchestrator(request: Request) -> IncidentOrchestrator:
-    session_id = request.headers.get("X-Session-ID", "default")
-    return session_manager.get_orchestrator(session_id)
+def get_orchestrator(request: Request) -> IncidentOrchestrator:  # noqa: ARG001
+    return global_orchestrator
 
 # Create notebooks directory if not exists
 if not os.path.exists('notebooks'):
@@ -118,8 +117,7 @@ async def get_index():
 @app.post("/query")
 async def run_ai_query(req: QueryRequest, request: Request):
     orchestrator = get_orchestrator(request)
-    session_id = request.headers.get("X-Session-ID", "default")
-    info(f"Received query request for session {session_id}")
+    info("Received query request")
     try:
         # 1. If user attached text/csv files via chat, set them as the active context
         if req.datasets:
@@ -210,7 +208,6 @@ async def run_ai_query(req: QueryRequest, request: Request):
             result['answer'], 
             result['tool_used'], 
             str(req.notebook_cells),
-            session_id=request.headers.get("X-Session-ID", "default")
         )
         info(f"Query Result: Tool={result.get('tool_used')} | Answer Length={len(result.get('answer', ''))}")
         return result
@@ -224,8 +221,7 @@ async def run_ai_query(req: QueryRequest, request: Request):
 async def run_ai_query_stream(req: QueryRequest, request: Request):
     """Streaming version of /query — returns SSE (text/event-stream)."""
     orchestrator = get_orchestrator(request)
-    session_id = request.headers.get("X-Session-ID", "default")
-    info(f"Received streaming query for session {session_id}")
+    info("Received streaming query")
 
     # Handle file datasets (same as /query)
     combined_text = ""
@@ -298,12 +294,12 @@ async def run_ai_query_stream(req: QueryRequest, request: Request):
 
 from app.db.vector_store import vector_store
 
-# Tracks cancellation flags for running indexing jobs: key = "session_id:table_name"
+# Tracks cancellation flags for running indexing jobs: key = table_name
 _cancel_flags: dict = {}
 
-def process_and_index_rag(text_data: str, source_name: str, session_id: str = "default"):
+def process_and_index_rag(text_data: str, source_name: str):
     """Runs in the background: Chunks text into paragraphs with overlap, embeds, saves to pgvector."""
-    orchestrator = session_manager.get_orchestrator(session_id)
+    orchestrator = get_orchestrator(None)
 
     # Paragraph-level chunking: split on blank lines, then merge short paragraphs
     raw_paragraphs = [p.strip() for p in text_data.split('\n\n') if p.strip()]
@@ -348,12 +344,12 @@ def process_and_index_rag(text_data: str, source_name: str, session_id: str = "d
     vector_store.add_chunks(source_name, valid_chunks, embeddings)
     print(f"✅ Finished indexing {source_name} into RAG ({len(valid_chunks)} chunks)")
 
-def process_and_index_table(table_name: str, session_id: str = "default"):
+def process_and_index_table(table_name: str):
     """Retrieves all rows from a DB table, embeds them, and saves to pgvector."""
-    job_key = f"{session_id}:{table_name}"
+    job_key = table_name
     _cancel_flags[job_key] = False
 
-    orchestrator = session_manager.get_orchestrator(session_id)
+    orchestrator = get_orchestrator(None)
     print(f"Starting to index table '{table_name}'...")
     db = orchestrator.db
     if not db.engine:
@@ -405,8 +401,7 @@ async def trigger_rag_indexing(req: Request, background_tasks: BackgroundTasks):
         return {"status": "error", "message": "No active file context found to index."}
     
     # Send the heavy lifting to the background so the API returns instantly
-    session_id = req.headers.get("X-Session-ID", "default")
-    background_tasks.add_task(process_and_index_rag, text_content, source_name, session_id)
+    background_tasks.add_task(process_and_index_rag, text_content, source_name)
     
     return {"status": "indexing_started", "message": f"Indexing {source_name} in the background..."}
 
@@ -416,8 +411,7 @@ async def trigger_table_indexing(req: Request, background_tasks: BackgroundTasks
     table_name = data.get('table_name')
     if not table_name:
         return {"status": "error", "message": "No table name provided."}
-    session_id = req.headers.get("X-Session-ID", "default")
-    background_tasks.add_task(process_and_index_table, table_name, session_id)
+    background_tasks.add_task(process_and_index_table, table_name)
     return {"status": "indexing_started", "message": f"Indexing table '{table_name}' in the background..."}
 
 @app.post("/api/index_table/cancel")
@@ -425,20 +419,9 @@ async def cancel_table_indexing(req: Request):
     """Sets the cancel flag for a running table indexing job."""
     data = await req.json()
     table_name = data.get('table_name')
-    session_id = req.headers.get("X-Session-ID", "default")
-    job_key = f"{session_id}:{table_name}"
-
-    # Try exact session match first
-    if job_key in _cancel_flags:
-        _cancel_flags[job_key] = True
+    if table_name in _cancel_flags:
+        _cancel_flags[table_name] = True
         return {"status": "cancelled", "message": f"Cancel signal sent for '{table_name}'."}
-
-    # Fallback: find any job for this table regardless of session
-    for key in list(_cancel_flags.keys()):
-        if key.endswith(f":{table_name}"):
-            _cancel_flags[key] = True
-            return {"status": "cancelled", "message": f"Cancel signal sent for '{table_name}'."}
-
     return {"status": "not_found", "message": f"No active indexing job found for '{table_name}'."}
 
 @app.get("/api/vector_memory")
@@ -489,9 +472,8 @@ async def upload_file(file: UploadFile = File(...), request: Request = None):
     Uploads a file, extracts text, and sets it as context for the user's session Orchestrator.
     """
     orchestrator = get_orchestrator(request)
-    session_id = request.headers.get("X-Session-ID", "default")
     filename = file.filename
-    info(f"File upload request: {filename} (Session: {session_id})")
+    info(f"File upload request: {filename}")
     
     ALLOWED_EXTENSIONS = {
         ".txt", ".pdf", ".docx", ".csv", ".py", ".js", ".json", ".ipynb", 
@@ -518,9 +500,8 @@ async def upload_file(file: UploadFile = File(...), request: Request = None):
             }
         elif is_unstructured_file(filename):
             orchestrator.set_file_context(extracted_text, file_type='unstructured', filename=filename)
-            # Auto-index into pgvector RAG (shared across all sessions)
-            session_id = request.headers.get("X-Session-ID", "default") if request else "default"
-            process_and_index_rag(extracted_text, filename, session_id)
+            # Auto-index into pgvector RAG
+            process_and_index_rag(extracted_text, filename)
             return {
                 "status": "success",
                 "filename": filename,
@@ -576,11 +557,8 @@ async def save_llm_settings(req: Request):
 
 @app.get("/api/sessions")
 async def get_active_sessions():
-    """Admin endpoint: shows how many sessions are active."""
-    return {
-        "active_sessions": session_manager.active_count,
-        "session_ids": [s[:8] + "..." for s in session_manager.session_ids()]
-    }
+    """Admin endpoint: single-user deployment info."""
+    return {"active_sessions": 1, "session_ids": ["default"]}
 @app.get("/api/connections")
 async def list_conns(): return config_manager.get_all_configs()
 
@@ -662,11 +640,11 @@ async def activate_conn(req: Request):
 
 @app.get("/api/history")
 async def get_hist(req: Request):
-    return history_manager.get_all_history(req.headers.get("X-Session-ID", "default"))
+    return history_manager.get_all_history()
 
 @app.delete("/api/history/{item_id}")
 async def delete_history(item_id: int, req: Request):
-    history_manager.delete_history_item(item_id, req.headers.get("X-Session-ID", "default"))
+    history_manager.delete_history_item(item_id)
     return {"status": "deleted"}
 
 # In main.py

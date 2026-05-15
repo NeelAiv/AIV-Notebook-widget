@@ -1,38 +1,8 @@
 ﻿// ======================================================
-// SESSION ISOLATION — Multi-user support
+// SINGLE-USER MODE
 // ======================================================
-// Generate a unique session ID per browser tab and persist it in sessionStorage.
-// This is sent as 'X-Session-ID' on every API call so the server can route
-// each user to their own isolated Orchestrator instance.
-const SESSION_ID = (() => {
-    const key = 'aiv_session_id';
-    const existing = sessionStorage.getItem(key);
-    if (existing) return existing;
-    const id = (typeof crypto !== 'undefined' && crypto.randomUUID)
-        ? crypto.randomUUID()
-        : 'sess-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-    sessionStorage.setItem(key, id);
-    return id;
-})();
-
-// Intercept ALL local fetch() calls and silently add the session header.
-// This means no individual fetch call needs to be changed.
-(function patchFetch() {
-    const _orig = window.fetch.bind(window);
-    window.fetch = function (url, options = {}) {
-        // Only patch same-origin (relative) URLs
-        if (typeof url === 'string' && (url.startsWith('/') || url.startsWith(window.location.origin))) {
-            options = {
-                ...options,
-                headers: {
-                    ...(options.headers || {}),
-                    'X-Session-ID': SESSION_ID
-                }
-            };
-        }
-        return _orig(url, options);
-    };
-})();
+// This app runs one instance per Docker deployment (single user).
+// Session isolation has been removed; all requests share one global context.
 
 let currentAbortController = null;
 let attachedFiles = [];
@@ -4082,7 +4052,7 @@ async function showTablePreview(event, tableName) {
         if (!_previewCache[tableName]) {
             try {
                 const resp = await fetch(`/api/tables/${encodeURIComponent(tableName)}/preview`,
-                    { headers: { 'X-Session-ID': SESSION_ID } });
+                    { headers: {} });
                 _previewCache[tableName] = await resp.json();
             } catch (e) { return; }
         }
@@ -4158,7 +4128,7 @@ async function cancelTableIndex(tableName, event) {
     // Tell the backend to stop embedding
     await fetch('/api/index_table/cancel', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Session-ID': SESSION_ID },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ table_name: tableName })
     });
     inflightTableActions.delete(tableName);
@@ -5985,7 +5955,7 @@ async function saveLLMSettings() {
             statusEl.innerText = 'Testing connection…';
             const testResp = await fetch('/api/llm/test', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-Session-ID': SESSION_ID }
+                headers: { 'Content-Type': 'application/json' }
             });
             const testResult = await testResp.json();
             if (testResult.status === 'ok') {
@@ -6312,7 +6282,7 @@ async function triggerContextRollover(auto = false) {
     try {
         const resp = await fetch('/api/summarize_context', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Session-ID': SESSION_ID },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ chat_history: chatHistory })
         });
         const data = await resp.json();

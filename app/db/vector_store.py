@@ -109,7 +109,7 @@ class LocalVectorStore:
         source_name: str,
         chunks: list[str],
         embeddings: list[list[float]] | None = None,
-        session_id: str = "default",
+        session_id: str = "default",  # kept for API compat; always "default" in single-user mode
     ):
         if not chunks:
             return
@@ -157,7 +157,7 @@ class LocalVectorStore:
         query_embedding: list[float],
         n_results: int = 5,
         where: dict | None = None,
-        session_id: str = "default",
+        session_id: str = "default",  # kept for API compat; always "default" in single-user mode
     ):
         _ = where  # reserved for future metadata filters (Chroma API compatibility)
 

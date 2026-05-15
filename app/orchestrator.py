@@ -1240,8 +1240,7 @@ fig'''
         if use_rag_context:
             try:
                 query_vec = self.embedder.get_embedding(user_query)
-                session_id = getattr(self, "session_id", "default")
-                rag_results = vector_store.search(query_vec, n_results=3, session_id=session_id)
+                rag_results = vector_store.search(query_vec, n_results=3)
                 if rag_results:
                     # Cap each chunk at 300 chars and total RAG context at 1200 chars
                     rag_lines = []
@@ -1753,7 +1752,7 @@ fig'''
         if use_rag_context:
             try:
                 qv = self.embedder.get_embedding(user_query)
-                rr = vector_store.search(qv, n_results=3, session_id=getattr(self, "session_id", "default"))
+                rr = vector_store.search(qv, n_results=3)
                 if rr:
                     lines, total = [], 0
                     for r in rr:
@@ -2256,7 +2255,7 @@ df
         elif name == "search_knowledge":
             search_query = args.get("search_query", user_query)
             qv = self.embedder.get_embedding(search_query)
-            retrieved = vector_store.search(qv, n_results=3, session_id=getattr(self, "session_id", "default"))
+            retrieved = vector_store.search(qv, n_results=3)
             lines, total = [], 0
             for r in retrieved:
                 line = f"[{r['source_name']}]: {r['chunk_text'][:300]}"
