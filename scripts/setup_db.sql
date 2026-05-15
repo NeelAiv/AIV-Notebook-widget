@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS incidents (
     severity_level INT CHECK (severity_level BETWEEN 1 AND 5), -- 1=Critical, 5=Info
     status VARCHAR(20) DEFAULT 'Open',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    embedding VECTOR(384) -- Dimension size must match BAAI/bge-small-en-v1.5
+    embedding VECTOR(768) -- Must match EMBEDDING_MODEL (default: BAAI/bge-base-en-v1.5)
 );
 
 -- 3. Create a vector index for faster searching

@@ -19,7 +19,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Create runtime directories that are gitignored
-RUN mkdir -p /app/notebooks /app/chroma_db /app/app/db
+RUN mkdir -p /app/notebooks /app/app/db
 
 EXPOSE 8090
 

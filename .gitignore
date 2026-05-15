@@ -9,8 +9,11 @@ connections.json
 .vscode/
 .idea/
 
-# ChromaDB — runtime vector store
+# Legacy ChromaDB path (unused after pgvector migration)
 chroma_db/
+
+# Docker named volume data (optional local mirror)
+pgvector_data/
 
 # SQLite runtime DB
 app/db/insight.db
@@ -20,3 +23,6 @@ llm_config.json
 
 # Notebooks with potentially sensitive query history (remove this line if you want them tracked)
 notebooks/
+
+# Local scratch / prompt drafts (not part of the app)
+sql_handler_prompts_to_use.sql

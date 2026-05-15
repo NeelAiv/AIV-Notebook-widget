@@ -6,6 +6,9 @@ import uvicorn
 import sys
 import os
 import json
+from dotenv import load_dotenv
+
+load_dotenv()
 from io import StringIO
 import datetime
 import decimal
@@ -299,7 +302,7 @@ from app.db.vector_store import vector_store
 _cancel_flags: dict = {}
 
 def process_and_index_rag(text_data: str, source_name: str, session_id: str = "default"):
-    """Runs in the background: Chunks text into paragraphs with overlap, embeds, saves to ChromaDB."""
+    """Runs in the background: Chunks text into paragraphs with overlap, embeds, saves to pgvector."""
     orchestrator = session_manager.get_orchestrator(session_id)
 
     # Paragraph-level chunking: split on blank lines, then merge short paragraphs
@@ -346,7 +349,7 @@ def process_and_index_rag(text_data: str, source_name: str, session_id: str = "d
     print(f"✅ Finished indexing {source_name} into RAG ({len(valid_chunks)} chunks)")
 
 def process_and_index_table(table_name: str, session_id: str = "default"):
-    """Retrieves all rows from a DB table, embeds them, and saves to ChromaDB."""
+    """Retrieves all rows from a DB table, embeds them, and saves to pgvector."""
     job_key = f"{session_id}:{table_name}"
     _cancel_flags[job_key] = False
 
@@ -389,7 +392,7 @@ def process_and_index_table(table_name: str, session_id: str = "default"):
 
     vector_store.add_chunks(table_name, valid_chunks, embeddings)
     _cancel_flags.pop(job_key, None)
-    print(f"✅ Finished indexing table '{table_name}' ({len(valid_chunks)} chunks) for RAG into ChromaDB!")
+    print(f"✅ Finished indexing table '{table_name}' ({len(valid_chunks)} chunks) for RAG into pgvector!")
 
 @app.post("/api/index_rag")
 async def trigger_rag_indexing(req: Request, background_tasks: BackgroundTasks):
@@ -440,25 +443,17 @@ async def cancel_table_indexing(req: Request):
 
 @app.get("/api/vector_memory")
 async def get_vector_memory():
-    """Returns a list of all unique data sources currently in the ChromaDB RAG."""
+    """Returns a list of all unique data sources currently in the RAG vector store (pgvector)."""
     try:
-        data = vector_store.collection.get()
-        metas = data.get("metadatas", [])
-        
-        sources = set()
-        for m in metas:
-            if m and "source" in m:
-                sources.add(m["source"])
-                
-        return {"sources": list(sources)}
+        return {"sources": vector_store.list_sources()}
     except Exception as e:
         return {"sources": [], "error": str(e)}
 
 @app.delete("/api/vector_memory/{source_name}")
 async def delete_vector_memory(source_name: str):
-    """Deletes a specific data source from the ChromaDB RAG."""
+    """Deletes a specific data source from the RAG vector store (pgvector)."""
     try:
-        vector_store.collection.delete(where={"source": source_name})
+        vector_store.delete_by_source(source_name)
         return {"status": "success", "message": f"Deleted '{source_name}' from memory."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -523,7 +518,7 @@ async def upload_file(file: UploadFile = File(...), request: Request = None):
             }
         elif is_unstructured_file(filename):
             orchestrator.set_file_context(extracted_text, file_type='unstructured', filename=filename)
-            # Auto-index into ChromaDB for RAG (shared across all sessions)
+            # Auto-index into pgvector RAG (shared across all sessions)
             session_id = request.headers.get("X-Session-ID", "default") if request else "default"
             process_and_index_rag(extracted_text, filename, session_id)
             return {
