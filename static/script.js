@@ -1,4 +1,4 @@
-﻿﻿// ======================================================
+﻿// ======================================================
 // SESSION ISOLATION — Multi-user support
 // ======================================================
 // Generate a unique session ID per browser tab and persist it in sessionStorage.
@@ -4218,7 +4218,7 @@ async function deleteVectorMemory(sourceName, event) {
     inflightMemoryActions.add(sourceName);
     await loadVectorMemory({ preserve: true });
 
-    if (!await customConfirm(`Remove "${sourceName}" from AI Vector Memory?\n\nThis will delete all indexed chunks for this source from ChromaDB.`, true)) {
+    if (!await customConfirm(`Remove "${sourceName}" from AI Vector Memory?\n\nThis will delete all indexed chunks for this source from the vector store (PostgreSQL / pgvector).`, true)) {
         inflightMemoryActions.delete(sourceName);
         await loadVectorMemory({ preserve: true });
         return;

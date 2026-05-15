@@ -9,8 +9,11 @@ connections.json
 .vscode/
 .idea/
 
-# ChromaDB — runtime vector store
+# Legacy ChromaDB path (unused after pgvector migration)
 chroma_db/
+
+# Docker named volume data (optional local mirror)
+pgvector_data/
 
 # SQLite runtime DB
 app/db/insight.db

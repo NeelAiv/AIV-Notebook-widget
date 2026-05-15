@@ -1,36 +1,33 @@
 from sentence_transformers import SentenceTransformer
 import os
 
+_DEFAULT_MODEL = "BAAI/bge-base-en-v1.5"
+
+
 class LocalEmbedder:
     def __init__(self):
-        # We use BGE-Small because it is:
-        # 1. Very accurate for retrieval
-        # 2. Very small (only 384 dimensions)
-        # 3. Fast enough to run on a CPU without lag
-        print("📥 Loading Embedding Model (CPU)...")
-        # Disable unauthenticated warning and force local loading to speed up restarts
+        model_name = os.environ.get("EMBEDDING_MODEL", _DEFAULT_MODEL).strip() or _DEFAULT_MODEL
+        print(f"Loading embedding model (CPU): {model_name} ...")
         os.environ["HF_HUB_DISABLE"] = "1"
-        # device='cpu' is CRITICAL here to save your GPU for the LLM
         try:
-            self.model = SentenceTransformer('BAAI/bge-small-en-v1.5', device='cpu', local_files_only=True)
+            self.model = SentenceTransformer(
+                model_name, device="cpu", local_files_only=True
+            )
         except Exception:
-            # Fallback to download just in case the cache was cleared
             os.environ.pop("HF_HUB_DISABLE", None)
-            self.model = SentenceTransformer('BAAI/bge-small-en-v1.5', device='cpu')
-            
-        print("✅ Embedding Model Loaded.")
+            self.model = SentenceTransformer(model_name, device="cpu")
+
+        dim_fn = getattr(
+            self.model, "get_embedding_dimension", self.model.get_sentence_embedding_dimension
+        )
+        self.dimension = int(dim_fn())
+        print(f"Embedding model loaded ({self.dimension} dimensions).")
 
     def get_embedding(self, text):
-        """
-        Converts a text string into a list of 384 floats.
-        """
+        """Encode text to a list of floats (dimension matches EMBEDDING_MODEL)."""
         if not text:
             return []
-            
-        # .tolist() converts the numpy array to a standard Python list
-        # so it can be sent to PostgreSQL
         return self.model.encode(text).tolist()
 
-# Singleton instance for easy import
-# This prevents reloading the model every time we import this file
+
 embedder_instance = LocalEmbedder()

@@ -1,19 +1,39 @@
 version: '3.8'
 
 services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: insightedge-pgvector
+    environment:
+      POSTGRES_USER: rag
+      POSTGRES_PASSWORD: ${RAG_POSTGRES_PASSWORD:-ragsecret}
+      POSTGRES_DB: rag
+    volumes:
+      - pgvector_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag -d rag"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   ai-notebook:
     build: .
     container_name: insightedge-ai-notebook
     ports:
       - "8090:8090"
     volumes:
-      # Persist runtime data outside the container
       - ./notebooks:/app/notebooks
-      - ./chroma_db:/app/chroma_db
       - ./connections.json:/app/connections.json
       - ./history.json:/app/history.json
       - ./llm_config.json:/app/llm_config.json
     environment:
-      # Optional: set API key via env var instead of the UI
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - RAG_DATABASE_URL=postgresql://rag:${RAG_POSTGRES_PASSWORD:-ragsecret}@postgres:5432/rag
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-base-en-v1.5}
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
+
+volumes:
+  pgvector_data:
