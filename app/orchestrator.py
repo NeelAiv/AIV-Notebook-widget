@@ -1,10 +1,16 @@
-﻿from app.db.db_client import DBClient
+from app.db.db_client import DBClient
 from app.core.embedder import embedder_instance
 from app.core.remote_llm import llm_instance
 from app.db.vector_store import vector_store
 from app.utils.logger import info, error, warning
+from app.utils.text_chunking import (
+    DEFAULT_PREVIEW_CHARS,
+    dedupe_retrieved,
+    format_rag_excerpts,
+)
 from sqlalchemy import text
 import json
+import os
 import re
 import sys
 from typing import List, Dict, Any, Optional
@@ -912,6 +918,147 @@ fig'''
 
         return False
 
+    def _is_file_content_question(self, user_query: str) -> bool:
+        """True when the user is asking about an uploaded document/file, not the database."""
+        q = user_query.strip().lower()
+        file_patterns = [
+            r"\b(this|the|that)\s+(file|document|doc|pdf|docx|upload|attachment)\b",
+            r"\bwhat(?:'s| is)\s+in\b",
+            r"\bcontent\s+of\b",
+            r"\bsummarize\s+(this|the)\s+(file|document)\b",
+            r"\btell\s+me\s+about\s+(this|the)\s+(file|document)\b",
+            r"\b(read|explain|describe)\s+(this|the)\s+(file|document)\b",
+            r"\bwhat\s+does\s+(this|the)\s+(file|document)\s+(say|contain|cover)\b",
+        ]
+        if any(re.search(p, q) for p in file_patterns):
+            return True
+        if re.match(
+            r"^(what(?:'s| is) (this|it)|summarize( this)?|explain( this)?|describe( this)?)\??$",
+            q,
+        ):
+            return True
+        fn = (self.active_filename or "").lower()
+        if fn and fn in q and any(
+            w in q for w in ("what", "summarize", "summary", "explain", "describe", "content", "about")
+        ):
+            return True
+        return False
+
+    def _should_answer_from_file(self, user_query: str, use_db_context: bool) -> bool:
+        """Route to document/RAG pipeline instead of SQL/notebook code generation."""
+        if not (self.active_file_context or "").strip():
+            return False
+        if self._is_file_content_question(user_query):
+            return True
+        # Unstructured upload + DB off: default to file Q&A unless user clearly wants SQL/charts
+        if not use_db_context and self.active_file_type == "unstructured":
+            q = user_query.lower()
+            db_intent = [
+                "chart", "plot", "graph", "visualize", "sql", "query", "table",
+                "database", "datasource", "schema", "column", "select ", "from ",
+            ]
+            if not any(w in q for w in db_intent):
+                return True
+        return False
+
+    def _retrieve_document_chunks(
+        self, user_query: str, source_name: str | None = None
+    ) -> list[dict]:
+        """Semantic retrieval: one primary search; extra passes only if results are sparse."""
+        source = source_name or self.active_filename
+        src_filter = source if source else None
+        all_hits: list[dict] = []
+
+        try:
+            qv = self.embedder.get_embedding(user_query)
+            all_hits.extend(
+                vector_store.search(qv, n_results=12, source_name=src_filter)
+            )
+        except Exception as e:
+            info(f"RAG primary retrieval failed: {e}")
+
+        if len(all_hits) < 6:
+            follow_ups = [
+                "table of contents chapters overview summary",
+                "requirements setup installation hardware software",
+            ]
+            try:
+                follow_vecs = self.embedder.get_embeddings(follow_ups)
+                for fv in follow_vecs:
+                    if not fv:
+                        continue
+                    all_hits.extend(
+                        vector_store.search(fv, n_results=5, source_name=src_filter)
+                    )
+                    if len(all_hits) >= 18:
+                        break
+            except Exception as e:
+                info(f"RAG follow-up retrieval failed: {e}")
+
+        if source:
+            matching = [
+                h for h in all_hits
+                if h.get("source_name") == source or source in (h.get("source_name") or "")
+            ]
+            if matching:
+                others = [h for h in all_hits if h not in matching][:4]
+                all_hits = matching + others
+
+        return dedupe_retrieved(all_hits)[:20]
+
+    def _answer_from_file(
+        self, user_query: str, use_rag_context: bool, chat_history: list | None = None
+    ) -> Dict[str, Any]:
+        """Answer questions about the active uploaded file using RAG and/or file text."""
+        filename = self.active_filename or "uploaded file"
+        chat_history = chat_history or []
+
+        rag_ctx = ""
+        retrieved: list[dict] = []
+        if use_rag_context:
+            try:
+                retrieved = self._retrieve_document_chunks(user_query, filename)
+                rag_ctx = format_rag_excerpts(retrieved)
+            except Exception as e:
+                info(f"RAG retrieval for file question failed: {e}")
+
+        preview = (self.active_file_context or "")[:DEFAULT_PREVIEW_CHARS]
+        history_block = ""
+        if chat_history:
+            history_block = (
+                f"\n\nRecent chat (for context only):\n"
+                f"{self._format_history(chat_history[-6:], scrub_db=True, scrub_rag=False)}"
+            )
+
+        system_msg = (
+            "You are a document analyst. The user uploaded a file and is asking about ITS content.\n"
+            "Answer ONLY from the uploaded file / document excerpts below.\n"
+            "Do NOT write SQL, Python, or query_db code. Do NOT query database tables.\n"
+            "For overview questions (e.g. 'what is in this file'):\n"
+            "- State document type and purpose in 1-2 sentences.\n"
+            "- List each chapter/section with a one-line description.\n"
+            "- Do NOT enumerate every glossary term; summarize 'Key Terms' as a category unless the user asks for the full list.\n"
+            "- End with a complete closing sentence. If the document is long, invite the user to ask about a specific chapter.\n"
+            "If excerpts are incomplete, say what you can see and what may be missing.\n"
+        )
+        user_msg = (
+            f"Uploaded file: {filename}\n"
+            f"User question: {user_query}\n\n"
+        )
+        if rag_ctx:
+            user_msg += f"DOCUMENT EXCERPTS (semantic search):\n{rag_ctx}\n\n"
+        user_msg += f"FILE TEXT PREVIEW:\n{preview}\n{history_block}"
+
+        resp = self.llm.generate(system_msg, user_msg, purpose="file_qa")
+        answer = resp if isinstance(resp, str) else resp.get("content", "")
+        tool = "Vector_Search (RAG)" if use_rag_context and rag_ctx else "File Context"
+        return {
+            "answer": answer.strip(),
+            "tool_used": tool,
+            "trace": f"Answered from uploaded file: {filename}",
+            "raw_data": retrieved,
+        }
+
     def _validate_and_fix_sql(self, sql_query: str) -> str:
         """Validate SQL using EXPLAIN and auto-fix with LLM if invalid, injecting the real schema."""
         try:
@@ -975,6 +1122,10 @@ fig'''
         use_rag_context: bool = False
     ) -> Dict[str, Any]:
         info(f"Agent received request: '{user_query[:50]}...'")
+
+        # File/document questions must not route to SQL or query_db
+        if self._should_answer_from_file(user_query, use_db_context):
+            return self._answer_from_file(user_query, use_rag_context, chat_history)
 
         # Check for vague queries and ask for clarification
         if self._is_vague_query(user_query) and use_db_context and getattr(self, "db", None) and self.db.engine:
@@ -1170,7 +1321,7 @@ fig'''
                     context_parts.append(join_hints)
 
         if self.active_file_context:
-            dataset_preview = self.active_file_context[:1500]
+            dataset_preview = self.active_file_context[:DEFAULT_PREVIEW_CHARS]
             filename = getattr(self, "active_filename", "uploaded_data")
             file_context_str = f"--- UPLOADED FILE CONTEXT ---\nFilename: {filename}\n"
             
@@ -1239,27 +1390,29 @@ fig'''
         # RAG context: if toggle is ON, pre-fetch relevant chunks and inject into context
         if use_rag_context:
             try:
-                query_vec = self.embedder.get_embedding(user_query)
-                rag_results = vector_store.search(query_vec, n_results=3)
-                if rag_results:
-                    # Cap each chunk at 300 chars and total RAG context at 1200 chars
-                    rag_lines = []
-                    total = 0
-                    for r in rag_results:
-                        chunk = r['chunk_text'][:300]
-                        line = f"[{r['source_name']}]: {chunk}"
-                        if total + len(line) > 1200:
-                            break
-                        rag_lines.append(line)
-                        total += len(line)
-                    context_parts.append(f"RAG KNOWLEDGE BASE ({len(rag_lines)} chunks):\n" + "\n\n".join(rag_lines))
-                    info(f"RAG: Injected {len(rag_lines)} chunks (~{total} chars) into context")
+                rag_results = self._retrieve_document_chunks(
+                    user_query, self.active_filename
+                )
+                rag_ctx = format_rag_excerpts(rag_results)
+                if rag_ctx:
+                    context_parts.append(
+                        f"RAG KNOWLEDGE BASE ({len(rag_results)} chunks):\n{rag_ctx}"
+                    )
+                    info(f"RAG: Injected {len(rag_results)} chunks into context")
                 else:
                     context_parts.append("RAG KNOWLEDGE BASE: No relevant documents found.")
             except Exception as e:
                 info(f"RAG retrieval failed: {e}")
 
         # 3. Formulate Agent Prompt (OPTIMIZED - Shorter for faster generation)
+        file_focus_notice = ""
+        if self.active_file_context and self._is_file_content_question(user_query):
+            file_focus_notice = (
+                "\nUPLOADED FILE FOCUS: The user is asking about the uploaded file in context. "
+                "Use `search_knowledge` or answer directly from UPLOADED FILE CONTEXT / RAG excerpts. "
+                "Do NOT use run_sql, query_db, or database tables for this request.\n"
+            )
+
         rag_tool_hint = (
             "\n- RAG is ENABLED: Use `search_knowledge` for any question about documents, policies, definitions, or non-SQL knowledge.\n"
             "- For questions that need BOTH data and document context, use `generate_code` with the RAG context already injected above.\n"
@@ -1281,11 +1434,21 @@ fig'''
             "- If the user asks about document content, tell them to enable 'Use RAG' toggle first\n\n"
         ) if not use_rag_context else ""
 
+        pyodide_ctx = PYODIDE_SYSTEM_CONTEXT
+        if not use_db_context:
+            pyodide_ctx = (
+                "ENVIRONMENT: Pyodide notebook. DATABASE IS DISABLED for this request.\n"
+                "NEVER use await query_db(), run_sql, or any SQL against database tables.\n"
+                "For uploaded documents use search_knowledge or answer from UPLOADED FILE CONTEXT.\n"
+                "For structured CSV/Excel uploads only, use dataset_string with pandas (no SQL).\n"
+            )
+
         system_msg = (
             "You are a Data Analyst Agent in a Pyodide notebook. EVERY code you generate MUST be Pyodide-compatible.\n\n"
             f"{no_db_notice}"
             f"{no_rag_notice}"
-            f"{PYODIDE_SYSTEM_CONTEXT}\n"
+            f"{file_focus_notice}"
+            f"{pyodide_ctx}\n"
             "CELL CONTEXT:\n"
             "- Each cell has an ID like [cell-1], [cell-2], etc.\n"
             "- When user says 'this cell', 'current cell', 'that code', they mean the ACTIVE CELL\n"
@@ -1325,8 +1488,10 @@ fig'''
             "   - Use `run_sql` for simple SELECT queries\n"
             "   - Use `generate_code` for multi-step Python analysis\n"
             "\n"
-            "3. DOCUMENT SEARCH ’ `search_knowledge`\n"
-            "   - Only when user asks about uploaded documents/PDFs\n"
+            "3. DOCUMENT / FILE QUESTIONS ’ `search_knowledge` OR direct text answer (NO SQL)\n"
+            "   - Triggered by: 'what is in this file', 'summarize the document', 'explain the upload', questions about PDF/DOCX/TXT\n"
+            "   - Use UPLOADED FILE CONTEXT and RAG excerpts; NEVER query_db or run_sql for these\n"
+            "   - If DATABASE CONTEXT IS OFF, you must NOT generate SQL under any circumstances\n"
             "\n"
             "TOP N / CHART QUERY RULES (UNIVERSAL):\n"
             "   These rules apply to ANY chart or top-N request regardless of the datasource:\n"
@@ -1528,7 +1693,10 @@ fig'''
 
         # 4. Agent Execution
         print(f"  â”œâ”€ ðŸ§  Building context: {len(context_parts)} parts included.")
-        response = self.llm.generate(system_msg, user_msg, images=images, tools=tools)
+        stream_purpose = "tool" if tools else "chat"
+        response = self.llm.generate(
+            system_msg, user_msg, images=images, tools=tools, purpose=stream_purpose
+        )
 
         # 5. Handle Text Responses
         if isinstance(response, str) or response.get("type") == "text":
@@ -1611,7 +1779,10 @@ fig'''
             accumulated_text = ""
             tool_event = None
 
-            for event in self.llm.generate_stream(system_msg, user_msg, images=images, tools=tools):
+            stream_purpose = "tool" if tools else "chat"
+            for event in self.llm.generate_stream(
+                system_msg, user_msg, images=images, tools=tools, purpose=stream_purpose
+            ):
                 if event["type"] == "token":
                     accumulated_text += event["text"]
                     yield _sse({"type": "token", "text": event["text"]})
@@ -1696,6 +1867,16 @@ fig'''
         shared with the streaming path. Returns a dict with system_msg, user_msg,
         tools, or early_return=True with answer.
         """
+        if self._should_answer_from_file(user_query, use_db_context):
+            ans = self._answer_from_file(user_query, use_rag_context, chat_history)
+            return {
+                "early_return": True,
+                "answer": ans["answer"],
+                "tool_used": ans["tool_used"],
+                "trace": ans["trace"],
+                "raw_data": ans.get("raw_data", []),
+            }
+
         # Vague query check
         if self._is_vague_query(user_query) and use_db_context and getattr(self, "db", None) and self.db.engine:
             schema = self.db.get_schema()
@@ -1751,31 +1932,49 @@ fig'''
 
         if use_rag_context:
             try:
-                qv = self.embedder.get_embedding(user_query)
-                rr = vector_store.search(qv, n_results=3)
-                if rr:
-                    lines, total = [], 0
-                    for r in rr:
-                        line = f"[{r['source_name']}]: {r['chunk_text'][:300]}"
-                        if total + len(line) > 1200: break
-                        lines.append(line); total += len(line)
-                    context_parts.append(f"RAG KNOWLEDGE BASE:\n" + "\n\n".join(lines))
-            except: pass
+                rr = self._retrieve_document_chunks(user_query, self.active_filename)
+                rag_ctx = format_rag_excerpts(rr)
+                if rag_ctx:
+                    context_parts.append(f"RAG KNOWLEDGE BASE:\n{rag_ctx}")
+            except Exception:
+                pass
+
+        if self.active_file_context:
+            fn = self.active_filename or "uploaded_data"
+            context_parts.append(
+                f"UPLOADED FILE CONTEXT ({fn}):\n"
+                f"{self.active_file_context[:DEFAULT_PREVIEW_CHARS]}"
+            )
 
         no_db = ("\nâ›” DATABASE CONTEXT IS OFF â€” do NOT generate SQL or reference schema.\n") if not use_db_context else ""
         no_rag = ("\nâ›” RAG CONTEXT IS OFF â€” do NOT use search_knowledge.\n") if not use_rag_context else ""
         rag_hint = ("\n- RAG ENABLED: use search_knowledge for document questions.\n") if use_rag_context else ""
 
+        file_focus = ""
+        if self.active_file_context and self._is_file_content_question(user_query):
+            file_focus = (
+                "\nUPLOADED FILE FOCUS: User is asking about the uploaded file. "
+                "Use search_knowledge or UPLOADED FILE CONTEXT. Do NOT use run_sql or query_db.\n"
+            )
+
+        pyodide_ctx = PYODIDE_SYSTEM_CONTEXT
+        if not use_db_context:
+            pyodide_ctx = (
+                "ENVIRONMENT: Pyodide notebook. DATABASE IS DISABLED for this request.\n"
+                "NEVER use await query_db(), run_sql, or SQL against database tables.\n"
+                "For documents use search_knowledge or UPLOADED FILE CONTEXT.\n"
+            )
+
         system_msg = (
             "You are a Data Analyst Agent in a Pyodide notebook.\n\n"
-            f"{no_db}{no_rag}"
-            f"{PYODIDE_SYSTEM_CONTEXT}\n\n"
+            f"{no_db}{no_rag}{file_focus}"
+            f"{pyodide_ctx}\n\n"
             "TOOL USAGE:\n"
             "0. Answer directly (no tool) for: greetings, yes/no questions about existing cells/charts, schema questions already in context, follow-ups, corrections.\n"
             "   EXAMPLES: 'is the chart showing 10 items?' ’ read cell code, answer yes/no. 'is this correct?' ’ evaluate and explain.\n"
             "1. Charts/plots ’ generate_code with go.Figure\n"
-            "2. Data retrieval ’ run_sql\n"
-            "3. Documents ’ search_knowledge\n"
+            "2. Data retrieval ’ run_sql (only when DATABASE CONTEXT IS ON)\n"
+            "3. Documents / file questions ’ search_knowledge (NO SQL)\n"
             f"{rag_hint}"
         )
         if is_modification and original_code:
@@ -1940,6 +2139,9 @@ fig'''
         Extracted from route_and_execute so it can be shared with the streaming path.
         """
         user_query_lower = user_query.lower()
+
+        if name == "run_sql" and not use_db_context:
+            return self._answer_from_file(user_query, use_rag_context, [])
 
         if name == "run_sql":
             sql_query = args.get("query", "")
@@ -2239,7 +2441,15 @@ df
                 return {"answer": f"```python\n{python_code}\n```", "tool_used": "Generate Code", "trace": sql_query, "raw_data": []}
 
         elif name == "generate_code":
-            code = self._sanitize_for_pyodide(args.get("python_code", ""))
+            code = args.get("python_code", "") or ""
+            if not use_db_context and re.search(r"\bquery_db\b|\brun_sql\b", code, re.IGNORECASE):
+                return self._answer_from_file(user_query, use_rag_context, [])
+            if self._should_answer_from_file(user_query, use_db_context) and re.search(
+                r"\bquery_db\b|\bSELECT\b|\bFROM\b", code, re.IGNORECASE
+            ):
+                return self._answer_from_file(user_query, use_rag_context, [])
+
+            code = self._sanitize_for_pyodide(code)
             code = self._inject_micropip_guards(code)
             code = self._ensure_final_output(code)
             if is_modification:
@@ -2254,14 +2464,10 @@ df
 
         elif name == "search_knowledge":
             search_query = args.get("search_query", user_query)
-            qv = self.embedder.get_embedding(search_query)
-            retrieved = vector_store.search(qv, n_results=3)
-            lines, total = [], 0
-            for r in retrieved:
-                line = f"[{r['source_name']}]: {r['chunk_text'][:300]}"
-                if total + len(line) > 1200: break
-                lines.append(line); total += len(line)
-            rag_ctx = "\n\n".join(lines) if lines else "No relevant documents found."
+            retrieved = self._retrieve_document_chunks(
+                search_query, self.active_filename
+            )
+            rag_ctx = format_rag_excerpts(retrieved) or "No relevant documents found."
             synth = self.llm.generate(
                 "Answer using the document context provided.",
                 f"Question: '{user_query}'\n\nDOCUMENT CONTEXT:\n{rag_ctx}"

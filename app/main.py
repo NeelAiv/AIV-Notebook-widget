@@ -25,6 +25,7 @@ from app.session_manager import orchestrator as global_orchestrator
 from app.request_models import QueryRequest
 from app.utils.file_parser import extract_text_from_file, is_structured_file, is_unstructured_file, extract_structured_metadata
 from app.utils.logger import info, error, warning
+from app.utils.text_chunking import chunk_text_for_rag
 
 app = FastAPI(title="InsightEdge AI Notebook")
 
@@ -114,8 +115,23 @@ async def get_index():
 
 # --- main.py --- (Focus on the /query endpoint)
 
+def schedule_unstructured_index(
+    background_tasks: BackgroundTasks | None,
+    text: str,
+    source_name: str,
+    orchestrator,
+) -> None:
+    """Index uploaded documents in the background so chat responses are not blocked."""
+    if background_tasks is not None:
+        background_tasks.add_task(auto_index_unstructured_file, text, source_name, orchestrator)
+        print(f"  └─ RAG indexing scheduled in background: {source_name}")
+    else:
+        n = auto_index_unstructured_file(text, source_name, orchestrator)
+        print(f"  └─ Auto-indexed {source_name} into RAG ({n} chunks)")
+
+
 @app.post("/query")
-async def run_ai_query(req: QueryRequest, request: Request):
+async def run_ai_query(req: QueryRequest, request: Request, background_tasks: BackgroundTasks):
     orchestrator = get_orchestrator(request)
     info("Received query request")
     try:
@@ -156,21 +172,10 @@ async def run_ai_query(req: QueryRequest, request: Request):
                 orchestrator.set_file_context(combined_text, metadata=metadata, file_type='structured', filename=last_filename)
             elif is_unstructured_file(last_filename):
                 orchestrator.set_file_context(combined_text, file_type='unstructured', filename=last_filename)
-                # Auto-index into RAG for unstructured files
-                from app.db.vector_store import vector_store as vs
                 try:
-                    chunks = [c.strip() for c in combined_text.split('\n') if c.strip()]
-                    embeddings = []
-                    valid_chunks = []
-                    for chunk in chunks[:500]:
-                        try:
-                            vec = orchestrator.embedder.get_embedding(chunk)
-                            valid_chunks.append(chunk)
-                            embeddings.append(vec)
-                        except: pass
-                    if valid_chunks:
-                        vs.add_chunks(last_filename, valid_chunks, embeddings)
-                        print(f"  └─ ✅ Auto-indexed {last_filename} into RAG ({len(valid_chunks)} chunks)")
+                    schedule_unstructured_index(
+                        background_tasks, combined_text, last_filename, orchestrator
+                    )
                 except Exception as e:
                     print(f"Auto-RAG indexing failed: {e}")
             else:
@@ -218,7 +223,9 @@ async def run_ai_query(req: QueryRequest, request: Request):
         raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
 
 @app.post("/query/stream")
-async def run_ai_query_stream(req: QueryRequest, request: Request):
+async def run_ai_query_stream(
+    req: QueryRequest, request: Request, background_tasks: BackgroundTasks
+):
     """Streaming version of /query — returns SSE (text/event-stream)."""
     orchestrator = get_orchestrator(request)
     info("Received streaming query")
@@ -252,6 +259,12 @@ async def run_ai_query_stream(req: QueryRequest, request: Request):
             orchestrator.set_file_context(combined_text, metadata=metadata, file_type='structured', filename=last_filename)
         elif is_unstructured_file(last_filename):
             orchestrator.set_file_context(combined_text, file_type='unstructured', filename=last_filename)
+            try:
+                schedule_unstructured_index(
+                    background_tasks, combined_text, last_filename, orchestrator
+                )
+            except Exception as e:
+                print(f"Auto-RAG indexing failed: {e}")
         else:
             orchestrator.set_file_context(combined_text, filename=last_filename)
 
@@ -297,52 +310,34 @@ from app.db.vector_store import vector_store
 # Tracks cancellation flags for running indexing jobs: key = table_name
 _cancel_flags: dict = {}
 
+
+def auto_index_unstructured_file(text: str, source_name: str, orchestrator) -> int:
+    """Chunk, embed (batched), and store an unstructured document in pgvector. Returns chunk count."""
+    chunks = [c for c in chunk_text_for_rag(text) if c.strip()]
+    if not chunks:
+        return 0
+    try:
+        embeddings = orchestrator.embedder.get_embeddings(chunks)
+        valid_chunks = [
+            c for c, emb in zip(chunks, embeddings) if emb and len(emb) == orchestrator.embedder.dimension
+        ]
+        valid_embeddings = [
+            emb for c, emb in zip(chunks, embeddings) if emb and len(emb) == orchestrator.embedder.dimension
+        ]
+        if valid_chunks:
+            vector_store.add_chunks(source_name, valid_chunks, valid_embeddings)
+            print(f"  └─ Indexed {source_name}: {len(valid_chunks)} chunks")
+        return len(valid_chunks)
+    except Exception as e:
+        print(f"Error batch-embedding {source_name}: {e}")
+        return 0
+
+
 def process_and_index_rag(text_data: str, source_name: str):
-    """Runs in the background: Chunks text into paragraphs with overlap, embeds, saves to pgvector."""
+    """Runs in the background: chunks text with overlap, embeds, saves to pgvector."""
     orchestrator = get_orchestrator(None)
-
-    # Paragraph-level chunking: split on blank lines, then merge short paragraphs
-    raw_paragraphs = [p.strip() for p in text_data.split('\n\n') if p.strip()]
-
-    # Merge very short paragraphs with the next one (avoids single-sentence chunks)
-    merged = []
-    buffer = ""
-    for para in raw_paragraphs:
-        if len(buffer) + len(para) < 400:
-            buffer = (buffer + " " + para).strip()
-        else:
-            if buffer:
-                merged.append(buffer)
-            buffer = para
-    if buffer:
-        merged.append(buffer)
-
-    # Add overlap: each chunk includes the last sentence of the previous chunk
-    chunks_with_overlap = []
-    for i, chunk in enumerate(merged):
-        if i > 0:
-            # Take last sentence of previous chunk as overlap
-            prev = merged[i - 1]
-            sentences = prev.replace('!', '.').replace('?', '.').split('.')
-            overlap = sentences[-2].strip() + '.' if len(sentences) >= 2 else ''
-            if overlap:
-                chunk = overlap + ' ' + chunk
-        chunks_with_overlap.append(chunk[:600])  # cap each chunk at 600 chars
-
-    valid_chunks = []
-    embeddings = []
-    for chunk in chunks_with_overlap:
-        if not chunk.strip():
-            continue
-        try:
-            vec = orchestrator.embedder.get_embedding(chunk)
-            valid_chunks.append(chunk)
-            embeddings.append(vec)
-        except Exception as e:
-            print(f"Error embedding chunk: {e}")
-
-    vector_store.add_chunks(source_name, valid_chunks, embeddings)
-    print(f"✅ Finished indexing {source_name} into RAG ({len(valid_chunks)} chunks)")
+    n = auto_index_unstructured_file(text_data, source_name, orchestrator)
+    print(f"✅ Finished indexing {source_name} into RAG ({n} chunks)")
 
 def process_and_index_table(table_name: str):
     """Retrieves all rows from a DB table, embeds them, and saves to pgvector."""
@@ -467,7 +462,11 @@ async def get_table_preview(table_name: str, req: Request):
         return {"columns": [], "rows": [], "error": str(e)}
 
 @app.post("/api/upload_file")
-async def upload_file(file: UploadFile = File(...), request: Request = None):
+async def upload_file(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+):
     """
     Uploads a file, extracts text, and sets it as context for the user's session Orchestrator.
     """
@@ -500,12 +499,15 @@ async def upload_file(file: UploadFile = File(...), request: Request = None):
             }
         elif is_unstructured_file(filename):
             orchestrator.set_file_context(extracted_text, file_type='unstructured', filename=filename)
-            # Auto-index into pgvector RAG
-            process_and_index_rag(extracted_text, filename)
+            background_tasks.add_task(process_and_index_rag, extracted_text, filename)
+            msg = (
+                f"Document '{filename}' uploaded. Indexing runs in the background; "
+                "turn on Use RAG in chat to search it (no manual index step)."
+            )
             return {
                 "status": "success",
                 "filename": filename,
-                "message": f"Document uploaded and auto-indexed for semantic search. AI will use RAG to find relevant sections when you ask questions."
+                "message": msg,
             }
         else:
             orchestrator.set_file_context(extracted_text, filename=filename)

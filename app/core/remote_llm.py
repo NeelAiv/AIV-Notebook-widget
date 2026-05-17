@@ -17,12 +17,107 @@ PROVIDERS = {
     "custom":     {"base_url": None,                                          "default_model": "qwen-vision"},
 }
 
+# Approximate max *completion* tokens by model id substring (first match wins).
+_MODEL_OUTPUT_PATTERNS: list[tuple[str, int]] = [
+    (r"gpt-4o-mini", 16384),
+    (r"gpt-4o", 16384),
+    (r"gpt-4-turbo", 16384),
+    (r"gpt-4", 8192),
+    (r"gpt-3\.5-turbo", 4096),
+    (r"gpt-3\.5", 4096),
+    (r"o1-mini", 65536),
+    (r"o1-preview", 32768),
+    (r"\bo1\b", 32768),
+    (r"deepseek-reasoner", 8192),
+    (r"deepseek-chat", 8192),
+    (r"deepseek", 8192),
+    (r"claude-3-5-sonnet", 8192),
+    (r"claude-3-opus", 4096),
+    (r"claude-3-haiku", 4096),
+    (r"claude-3", 8192),
+    (r"claude", 4096),
+    (r"gemini-2\.0", 8192),
+    (r"gemini-1\.5", 8192),
+    (r"gemini", 8192),
+    (r"llama-3\.1", 8192),
+    (r"llama-3", 8192),
+    (r"llama", 4096),
+    (r"mistral-large", 8192),
+    (r"mistral", 4096),
+    (r"qwen2", 8192),
+    (r"qwen", 8192),
+]
+
+_PROVIDER_DEFAULT_OUTPUT: dict[str, int] = {
+    "openai": 8192,
+    "deepseek": 8192,
+    "claude": 8192,
+    "gemini": 8192,
+    "nvidia": 4096,
+    "openrouter": 8192,
+    "custom": 4096,
+}
+
+
 class LLMClient:
     def __init__(self):
         self.custom_server_url = "http://95.217.115.227:8098/v1/chat/completions"
         self.client = None          # OpenAI-compatible client
         self.anthropic_client = None
         self.load_config()
+
+    def _infer_model_output_limit(self) -> int:
+        """Guess completion token ceiling from configured provider + model id."""
+        model = (self.config.get("model") or "").lower()
+        provider = self.config.get("provider", "custom")
+        for pattern, limit in _MODEL_OUTPUT_PATTERNS:
+            if re.search(pattern, model):
+                return limit
+        return _PROVIDER_DEFAULT_OUTPUT.get(provider, 4096)
+
+    def resolve_max_tokens(
+        self,
+        explicit: int | None = None,
+        *,
+        purpose: str = "chat",
+    ) -> int:
+        """
+        Pick max_tokens for an API call.
+
+        Priority: explicit arg > llm_config.json max_tokens > model/provider table > default.
+        purpose: 'chat' | 'file_qa' | 'tool' (tool routing uses a smaller budget).
+        """
+        if explicit is not None:
+            return max(256, int(explicit))
+
+        cfg_val = self.config.get("max_tokens")
+        if cfg_val is not None and str(cfg_val).strip() != "":
+            try:
+                return max(256, int(cfg_val))
+            except (TypeError, ValueError):
+                pass
+
+        limit = self._infer_model_output_limit()
+        cap_env = os.environ.get("LLM_MAX_TOKENS_CAP", "").strip()
+        if cap_env:
+            try:
+                limit = min(limit, int(cap_env))
+            except ValueError:
+                pass
+
+        if purpose == "file_qa":
+            file_env = os.environ.get("FILE_QA_MAX_TOKENS", "").strip()
+            if file_env:
+                try:
+                    return max(256, int(file_env))
+                except ValueError:
+                    pass
+            return limit
+
+        if purpose == "tool":
+            return min(limit, 2048)
+
+        return min(limit, 8192)
 
     def load_config(self):
         """Loads settings from llm_config.json and initialises the right SDK client."""
@@ -108,22 +203,31 @@ class LLMClient:
     # Public generate — routes to the right backend
     # ------------------------------------------------------------------
     def generate(self, system_message: str, user_message: str,
-                 images: list = None, tools: list = None):
+                 images: list = None, tools: list = None, max_tokens: int | None = None,
+                 purpose: str = "chat"):
         provider = self.config.get("provider", "custom")
         model    = self.config.get("model", "")
-        print(f"    📡 {provider.title()} → {model}")
+        resolved = self.resolve_max_tokens(max_tokens, purpose=purpose)
+        print(f"    📡 {provider.title()} → {model} (max_tokens={resolved}, purpose={purpose})")
 
         if provider == "claude" and self.anthropic_client:
-            return self._generate_claude(system_message, user_message, tools)
+            return self._generate_claude(
+                system_message, user_message, tools, max_tokens=resolved
+            )
 
         if provider != "custom" and self.client:
-            return self._generate_openai_compat(system_message, user_message, images, tools)
+            return self._generate_openai_compat(
+                system_message, user_message, images, tools, max_tokens=resolved
+            )
 
         # Fallback: custom streaming server
-        return self._generate_custom(system_message, user_message, images, tools)
+        return self._generate_custom(
+            system_message, user_message, images, tools, max_tokens=resolved
+        )
 
     def generate_stream(self, system_message: str, user_message: str,
-                        images: list = None, tools: list = None):
+                        images: list = None, tools: list = None,
+                        max_tokens: int | None = None, purpose: str = "chat"):
         """
         Generator that yields token strings as they arrive from the LLM.
         Yields strings for text tokens, and a final dict for tool calls.
@@ -133,16 +237,23 @@ class LLMClient:
         """
         provider = self.config.get("provider", "custom")
         model    = self.config.get("model", "")
-        print(f"    📡 Streaming: {provider.title()} → {model}")
+        resolved = self.resolve_max_tokens(max_tokens, purpose=purpose)
+        print(f"    📡 Streaming: {provider.title()} → {model} (max_tokens={resolved})")
 
         if provider == "claude" and self.anthropic_client:
-            yield from self._stream_claude(system_message, user_message, tools)
+            yield from self._stream_claude(system_message, user_message, tools, max_tokens=resolved)
         elif provider != "custom" and self.client:
-            yield from self._stream_openai_compat(system_message, user_message, images, tools)
+            yield from self._stream_openai_compat(
+                system_message, user_message, images, tools, max_tokens=resolved
+            )
         else:
-            yield from self._stream_custom(system_message, user_message, images, tools)
+            yield from self._stream_custom(
+                system_message, user_message, images, tools, max_tokens=resolved
+            )
 
-    def _stream_openai_compat(self, system_message, user_message, images=None, tools=None):
+    def _stream_openai_compat(
+        self, system_message, user_message, images=None, tools=None, max_tokens=None
+    ):
         """Stream tokens from OpenAI-compatible providers."""
         model = self.config.get("model") or "gpt-4o"
         messages = [{"role": "system", "content": system_message}]
@@ -162,7 +273,7 @@ class LLMClient:
                 "model": model,
                 "messages": messages,
                 "temperature": 0.2,
-                "max_tokens": self.config.get("max_tokens", 3000),
+                "max_tokens": max_tokens or self.resolve_max_tokens(purpose="chat"),
                 "stream": True,
             }
             if tools:
@@ -216,13 +327,13 @@ class LLMClient:
             yield {"type": "token", "text": msg}
             yield {"type": "done"}
 
-    def _stream_claude(self, system_message, user_message, tools=None):
+    def _stream_claude(self, system_message, user_message, tools=None, max_tokens=None):
         """Stream tokens from Claude (Anthropic SDK)."""
         model = self.config.get("model") or "claude-3-5-sonnet-20241022"
         try:
             kwargs = {
                 "model": model,
-                "max_tokens": self.config.get("max_tokens", 3000),
+                "max_tokens": max_tokens or self.resolve_max_tokens(purpose="chat"),
                 "system": system_message,
                 "messages": [{"role": "user", "content": user_message}],
             }
@@ -267,7 +378,9 @@ class LLMClient:
             headers["Authorization"] = f"Bearer {api_key}"
         return headers
 
-    def _stream_custom(self, system_message, user_message, images=None, tools=None):
+    def _stream_custom(
+        self, system_message, user_message, images=None, tools=None, max_tokens=None
+    ):
         """Stream tokens from the custom server (already streams via SSE)."""
         messages = [{"role": "system", "content": system_message}]
         if images:
@@ -280,10 +393,11 @@ class LLMClient:
         else:
             messages.append({"role": "user", "content": user_message})
 
+        purpose = "tool" if tools else "chat"
         payload = {
             "model": "qwen-vision",
             "messages": messages,
-            "max_tokens": 2048,
+            "max_tokens": max_tokens or self.resolve_max_tokens(purpose=purpose),
             "temperature": 0.1,
             "stream": True,
         }
@@ -355,7 +469,9 @@ class LLMClient:
     # ------------------------------------------------------------------
     # OpenAI-compatible (OpenAI / DeepSeek / Nvidia / OpenRouter / Gemini)
     # ------------------------------------------------------------------
-    def _generate_openai_compat(self, system_message, user_message, images=None, tools=None):
+    def _generate_openai_compat(
+        self, system_message, user_message, images=None, tools=None, max_tokens=None
+    ):
         model = self.config.get("model") or "gpt-4o"
         messages = [{"role": "system", "content": system_message}]
 
@@ -374,7 +490,7 @@ class LLMClient:
                 "model": model,
                 "messages": messages,
                 "temperature": 0.2,
-                "max_tokens": self.config.get("max_tokens", 3000),
+                "max_tokens": max_tokens or self.resolve_max_tokens(purpose="chat"),
             }
             if tools:
                 kwargs["tools"] = tools
@@ -407,12 +523,12 @@ class LLMClient:
     # ------------------------------------------------------------------
     # Claude (Anthropic SDK)
     # ------------------------------------------------------------------
-    def _generate_claude(self, system_message, user_message, tools=None):
+    def _generate_claude(self, system_message, user_message, tools=None, max_tokens=None):
         model = self.config.get("model") or "claude-3-5-sonnet-20241022"
         try:
             kwargs = {
                 "model": model,
-                "max_tokens": self.config.get("max_tokens", 3000),
+                "max_tokens": max_tokens or self.resolve_max_tokens(purpose="chat"),
                 "system": system_message,
                 "messages": [{"role": "user", "content": user_message}],
             }
@@ -449,7 +565,9 @@ class LLMClient:
     # ------------------------------------------------------------------
     # Custom streaming server (unchanged)
     # ------------------------------------------------------------------
-    def _generate_custom(self, system_message, user_message, images=None, tools=None):
+    def _generate_custom(
+        self, system_message, user_message, images=None, tools=None, max_tokens=None
+    ):
         messages = [{"role": "system", "content": system_message}]
 
         if images:
@@ -465,7 +583,7 @@ class LLMClient:
         payload = {
             "model": "qwen-vision",
             "messages": messages,
-            "max_tokens": 2048,
+            "max_tokens": max_tokens or self.resolve_max_tokens(purpose="chat"),
             "temperature": 0.1,
             "stream": True,
         }
