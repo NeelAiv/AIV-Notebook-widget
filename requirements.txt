@@ -22,4 +22,3 @@ openpyxl
 
 # Additional DB drivers for JDBC-style connections
 pyodbc          # SQL Server / MSSQL
-cx_Oracle       # Oracle (requires Oracle Instant Client installed separately)

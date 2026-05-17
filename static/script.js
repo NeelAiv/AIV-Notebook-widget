@@ -1,38 +1,8 @@
-﻿// ======================================================
-// SESSION ISOLATION — Multi-user support
 // ======================================================
-// Generate a unique session ID per browser tab and persist it in sessionStorage.
-// This is sent as 'X-Session-ID' on every API call so the server can route
-// each user to their own isolated Orchestrator instance.
-const SESSION_ID = (() => {
-    const key = 'aiv_session_id';
-    const existing = sessionStorage.getItem(key);
-    if (existing) return existing;
-    const id = (typeof crypto !== 'undefined' && crypto.randomUUID)
-        ? crypto.randomUUID()
-        : 'sess-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-    sessionStorage.setItem(key, id);
-    return id;
-})();
-
-// Intercept ALL local fetch() calls and silently add the session header.
-// This means no individual fetch call needs to be changed.
-(function patchFetch() {
-    const _orig = window.fetch.bind(window);
-    window.fetch = function (url, options = {}) {
-        // Only patch same-origin (relative) URLs
-        if (typeof url === 'string' && (url.startsWith('/') || url.startsWith(window.location.origin))) {
-            options = {
-                ...options,
-                headers: {
-                    ...(options.headers || {}),
-                    'X-Session-ID': SESSION_ID
-                }
-            };
-        }
-        return _orig(url, options);
-    };
-})();
+// SINGLE-USER MODE
+// ======================================================
+// This app runs one instance per Docker deployment (single user).
+// Session isolation has been removed; all requests share one global context.
 
 let currentAbortController = null;
 let attachedFiles = [];
@@ -2428,6 +2398,29 @@ function collectNotebookCells() {
     return cellsData;
 }
 
+// Per-message timer (each assistant bubble gets its own element — no shared IDs).
+function createAssistantMsgTimer() {
+    const startTime = Date.now();
+    const el = document.createElement('span');
+    el.className = 'ai-msg-timer';
+    el.style.cssText = "color:#888;font-size:0.7rem;font-family:'Fira Code',monospace;";
+    el.textContent = '0.0s';
+    const intervalId = setInterval(() => {
+        el.textContent = ((Date.now() - startTime) / 1000).toFixed(1) + 's';
+    }, 100);
+    return {
+        el,
+        stop() {
+            clearInterval(intervalId);
+            const secs = ((Date.now() - startTime) / 1000).toFixed(2);
+            el.textContent = `Took ${secs}s`;
+        },
+        cancel() {
+            clearInterval(intervalId);
+        },
+    };
+}
+
 // ======================================================
 // REGENERATE QUERY AFTER EDIT
 // ======================================================
@@ -2456,10 +2449,7 @@ async function runEditedQuery(prompt, messageIndex) {
     }
 
     // Timer
-    const startTime = Date.now();
-    const timerEl = document.createElement('span');
-    timerEl.style.cssText = "margin-left:auto;font-family:'Fira Code', monospace;font-size:0.85rem;color:#64748b;";
-    timerEl.innerText = '0.0s';
+    const msgTimer = createAssistantMsgTimer();
 
     // ── Assistant placeholder bubble ──────────────────────────────────────
     const assistantBubble = document.createElement('div');
@@ -2470,17 +2460,13 @@ async function runEditedQuery(prompt, messageIndex) {
     assistantBubble.style.borderRadius = '10px';
     assistantBubble.style.margin = '6px 0'; // Tighter
     assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><strong style="font-size:0.9rem;">Assistant</strong></div><div style="margin-top:10px;display:flex;align-items:center;gap:6px;"><div class="typing-dots"><span></span><span></span><span></span></div><span class="thinking-label">Thinking…</span></div>`;
-    assistantBubble.querySelector('div').appendChild(timerEl);
+    assistantBubble.querySelector('div').appendChild(msgTimer.el);
     contentArea.appendChild(assistantBubble);
 
     // Update messagePairs entry (index already trimmed to messageIndex)
     messagePairs[messageIndex].assistantBubble = assistantBubble;
 
     if (tray) tray.scrollTop = tray.scrollHeight;
-
-    const timerInt = setInterval(() => {
-        timerEl.innerText = ((Date.now() - startTime) / 1000).toFixed(1) + 's';
-    }, 100);
 
     setAILoading(true);
     currentAbortController = new AbortController();
@@ -2516,7 +2502,14 @@ async function runEditedQuery(prompt, messageIndex) {
         assistantBubble.innerHTML = '';
         const streamHeader2 = document.createElement('div');
         streamHeader2.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;';
-        streamHeader2.innerHTML = '<strong style="font-size:0.9rem;">Assistant</strong><span style="display:flex;align-items:center;gap:6px;"><span style="color:#888;font-size:0.7rem;" id="stream-timer-label2"></span></span>';
+        const streamHeaderRight2 = document.createElement('span');
+        streamHeaderRight2.style.cssText = 'display:flex;align-items:center;gap:6px;';
+        streamHeaderRight2.appendChild(msgTimer.el);
+        const streamTitle2 = document.createElement('strong');
+        streamTitle2.style.fontSize = '0.9rem';
+        streamTitle2.textContent = 'Assistant';
+        streamHeader2.appendChild(streamTitle2);
+        streamHeader2.appendChild(streamHeaderRight2);
         assistantBubble.appendChild(streamHeader2);
         assistantBubble.appendChild(streamBody2);
         if (tray) tray.scrollTop = tray.scrollHeight;
@@ -2553,10 +2546,7 @@ async function runEditedQuery(prompt, messageIndex) {
             if (finalData) break;
         }
 
-        clearInterval(timerInt);
-        const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
-        const streamTimerLabel2 = document.getElementById('stream-timer-label2');
-        if (streamTimerLabel2) streamTimerLabel2.textContent = `Took ${totalTime}s`;
+        msgTimer.stop();
 
         const toolUsed = finalData?.tool_used || 'Direct Answer';
         let answer = codeData?.answer || finalData?.answer || streamedText;
@@ -2626,7 +2616,7 @@ async function runEditedQuery(prompt, messageIndex) {
         if (tray) tray.scrollTop = tray.scrollHeight;
 
     } catch (e) {
-        clearInterval(timerInt);
+        msgTimer.cancel();
         if (e.name === 'AbortError') {
             assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><strong>Assistant</strong></div><div style="margin-top:8px;color:#94a3b8;font-style:italic;">Response cancelled.</div>`;
         } else {
@@ -2763,10 +2753,7 @@ async function runAIQuery() {
         }
     }
 
-    const startTime = Date.now();
-    const timerEl = document.createElement('span');
-    timerEl.style.cssText = "margin-left:auto;font-family:'Fira Code', monospace;font-size:0.85rem;color:#64748b;";
-    timerEl.innerText = '0.0s';
+    const msgTimer = createAssistantMsgTimer();
 
     // Append user's message (float right, dynamic width up to 70% with word-wrap)
     const userBubble = document.createElement('div');
@@ -2846,7 +2833,7 @@ async function runAIQuery() {
     assistantBubble.style.margin = '6px 0'; // Tightened vertical margins
     assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><strong style="font-size:0.9rem;">Assistant</strong></div><div style="margin-top:10px;display:flex;align-items:center;gap:6px;"><div class="typing-dots"><span></span><span></span><span></span></div><span class="thinking-label">Thinking…</span></div>`;
     // add timer to the header
-    assistantBubble.querySelector('div').appendChild(timerEl);
+    assistantBubble.querySelector('div').appendChild(msgTimer.el);
     contentArea.appendChild(assistantBubble);
 
     // IMPORTANT: Update messagePair with assistantBubble immediately so it can be removed if user clicks edit
@@ -2854,10 +2841,6 @@ async function runAIQuery() {
 
     // Auto-scroll
     if (tray) tray.scrollTop = tray.scrollHeight;
-
-    const timerInt = setInterval(() => {
-        timerEl.innerText = ((Date.now() - startTime) / 1000).toFixed(1) + 's';
-    }, 100);
 
     try {
         const endpoint = "query/stream";
@@ -2925,7 +2908,14 @@ async function runAIQuery() {
         assistantBubble.innerHTML = '';
         const streamHeader = document.createElement('div');
         streamHeader.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;';
-        streamHeader.innerHTML = '<strong style="font-size:0.9rem;">Assistant</strong><span style="display:flex;align-items:center;gap:6px;"><span style="color:#888;font-size:0.7rem;" id="stream-timer-label"></span></span>';
+        const streamHeaderRight = document.createElement('span');
+        streamHeaderRight.style.cssText = 'display:flex;align-items:center;gap:6px;';
+        streamHeaderRight.appendChild(msgTimer.el);
+        const streamTitle = document.createElement('strong');
+        streamTitle.style.fontSize = '0.9rem';
+        streamTitle.textContent = 'Assistant';
+        streamHeader.appendChild(streamTitle);
+        streamHeader.appendChild(streamHeaderRight);
         assistantBubble.appendChild(streamHeader);
         assistantBubble.appendChild(streamBody);
         // Scroll to show the new bubble
@@ -2974,10 +2964,7 @@ async function runAIQuery() {
             if (finalData) break;
         }
 
-        clearInterval(timerInt);
-        const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
-        const streamTimerLabel = document.getElementById('stream-timer-label');
-        if (streamTimerLabel) streamTimerLabel.textContent = `Took ${totalTime}s`;
+        msgTimer.stop();
 
         // Use codeData if we got a tool result, otherwise use streamed text
         const toolUsed = finalData?.tool_used || "Direct Answer";
@@ -3062,7 +3049,7 @@ async function runAIQuery() {
 
         clearComposerAttachments();
     } catch (e) {
-        clearInterval(timerInt);
+        msgTimer.cancel();
         console.error("[AI Query] Error processing response:", e);
         if (e.name === 'AbortError') {
             assistantBubble.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><strong>Assistant</strong></div><div style="margin-top:8px;color:#94a3b8;font-style:italic;">Response cancelled.</div>`;
@@ -4082,7 +4069,7 @@ async function showTablePreview(event, tableName) {
         if (!_previewCache[tableName]) {
             try {
                 const resp = await fetch(`/api/tables/${encodeURIComponent(tableName)}/preview`,
-                    { headers: { 'X-Session-ID': SESSION_ID } });
+                    { headers: {} });
                 _previewCache[tableName] = await resp.json();
             } catch (e) { return; }
         }
@@ -4158,7 +4145,7 @@ async function cancelTableIndex(tableName, event) {
     // Tell the backend to stop embedding
     await fetch('/api/index_table/cancel', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Session-ID': SESSION_ID },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ table_name: tableName })
     });
     inflightTableActions.delete(tableName);
@@ -5876,25 +5863,6 @@ async function uploadFile() {
             // Optional: clear input
             fileInput.value = '';
 
-            // Ask user if they'd like to index for RAG
-            setTimeout(async () => {
-                const wantToindex = confirm(`Would you like to index '${fileName}' for AI Semantic Search (RAG)?\n\nThis allows the AI to deeply read and compare text, but may take a few moments.`);
-                if (wantToindex) {
-                    statusDiv.innerHTML = '<span style="color: var(--text-secondary);">Starting background indexing...</span>';
-                    try {
-                        const ragResp = await fetch('/api/index_rag', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ source_name: fileName })
-                        });
-                        const ragResult = await ragResp.json();
-                        statusDiv.innerHTML = `<div style="color: #10b981; font-weight: 500;">✅ ${ragResult.message}</div>`;
-                    } catch (err) {
-                        statusDiv.innerHTML = `<span style="color: #ef4444;">Failed to start indexing: ${err.message}</span>`;
-                    }
-                }
-            }, 300);
-
         } else {
             statusDiv.innerHTML = `<span style="color: #ef4444;">Error: ${result.detail || 'Upload failed'}</span>`;
         }
@@ -5985,7 +5953,7 @@ async function saveLLMSettings() {
             statusEl.innerText = 'Testing connection…';
             const testResp = await fetch('/api/llm/test', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-Session-ID': SESSION_ID }
+                headers: { 'Content-Type': 'application/json' }
             });
             const testResult = await testResp.json();
             if (testResult.status === 'ok') {
@@ -6312,7 +6280,7 @@ async function triggerContextRollover(auto = false) {
     try {
         const resp = await fetch('/api/summarize_context', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Session-ID': SESSION_ID },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ chat_history: chatHistory })
         });
         const data = await resp.json();

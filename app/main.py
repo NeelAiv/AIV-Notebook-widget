@@ -21,10 +21,11 @@ from nbformat.v4 import new_notebook, new_code_cell, new_markdown_cell, new_outp
 # Custom Modules - Ensure these exist in app/db/
 from app.db import config_manager, history_manager
 from app.orchestrator import IncidentOrchestrator
-from app.session_manager import session_manager
+from app.session_manager import orchestrator as global_orchestrator
 from app.request_models import QueryRequest
 from app.utils.file_parser import extract_text_from_file, is_structured_file, is_unstructured_file, extract_structured_metadata
 from app.utils.logger import info, error, warning
+from app.utils.text_chunking import chunk_text_for_rag
 
 app = FastAPI(title="InsightEdge AI Notebook")
 
@@ -52,12 +53,11 @@ def safe_jsonify(data) -> JSONResponse:
     return JSONResponse(content=json.loads(json.dumps(data, default=_json_serial)))
 
 # ---------------------------------------------------------------------------
-# Helper: get the per-session orchestrator from the X-Session-ID header
-# Falls back to a shared "default" session if no header is present.
+# Helper: get the global orchestrator.
+# The app now uses a single shared orchestrator per deployment.
 # ---------------------------------------------------------------------------
-def get_orchestrator(request: Request) -> IncidentOrchestrator:
-    session_id = request.headers.get("X-Session-ID", "default")
-    return session_manager.get_orchestrator(session_id)
+def get_orchestrator(request: Request) -> IncidentOrchestrator:  # noqa: ARG001
+    return global_orchestrator
 
 # Create notebooks directory if not exists
 if not os.path.exists('notebooks'):
@@ -115,11 +115,25 @@ async def get_index():
 
 # --- main.py --- (Focus on the /query endpoint)
 
+def schedule_unstructured_index(
+    background_tasks: BackgroundTasks | None,
+    text: str,
+    source_name: str,
+    orchestrator,
+) -> None:
+    """Index uploaded documents in the background so chat responses are not blocked."""
+    if background_tasks is not None:
+        background_tasks.add_task(auto_index_unstructured_file, text, source_name, orchestrator)
+        print(f"  └─ RAG indexing scheduled in background: {source_name}")
+    else:
+        n = auto_index_unstructured_file(text, source_name, orchestrator)
+        print(f"  └─ Auto-indexed {source_name} into RAG ({n} chunks)")
+
+
 @app.post("/query")
-async def run_ai_query(req: QueryRequest, request: Request):
+async def run_ai_query(req: QueryRequest, request: Request, background_tasks: BackgroundTasks):
     orchestrator = get_orchestrator(request)
-    session_id = request.headers.get("X-Session-ID", "default")
-    info(f"Received query request for session {session_id}")
+    info("Received query request")
     try:
         # 1. If user attached text/csv files via chat, set them as the active context
         if req.datasets:
@@ -158,21 +172,10 @@ async def run_ai_query(req: QueryRequest, request: Request):
                 orchestrator.set_file_context(combined_text, metadata=metadata, file_type='structured', filename=last_filename)
             elif is_unstructured_file(last_filename):
                 orchestrator.set_file_context(combined_text, file_type='unstructured', filename=last_filename)
-                # Auto-index into RAG for unstructured files
-                from app.db.vector_store import vector_store as vs
                 try:
-                    chunks = [c.strip() for c in combined_text.split('\n') if c.strip()]
-                    embeddings = []
-                    valid_chunks = []
-                    for chunk in chunks[:500]:
-                        try:
-                            vec = orchestrator.embedder.get_embedding(chunk)
-                            valid_chunks.append(chunk)
-                            embeddings.append(vec)
-                        except: pass
-                    if valid_chunks:
-                        vs.add_chunks(last_filename, valid_chunks, embeddings)
-                        print(f"  └─ ✅ Auto-indexed {last_filename} into RAG ({len(valid_chunks)} chunks)")
+                    schedule_unstructured_index(
+                        background_tasks, combined_text, last_filename, orchestrator
+                    )
                 except Exception as e:
                     print(f"Auto-RAG indexing failed: {e}")
             else:
@@ -210,7 +213,6 @@ async def run_ai_query(req: QueryRequest, request: Request):
             result['answer'], 
             result['tool_used'], 
             str(req.notebook_cells),
-            session_id=request.headers.get("X-Session-ID", "default")
         )
         info(f"Query Result: Tool={result.get('tool_used')} | Answer Length={len(result.get('answer', ''))}")
         return result
@@ -221,11 +223,12 @@ async def run_ai_query(req: QueryRequest, request: Request):
         raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
 
 @app.post("/query/stream")
-async def run_ai_query_stream(req: QueryRequest, request: Request):
+async def run_ai_query_stream(
+    req: QueryRequest, request: Request, background_tasks: BackgroundTasks
+):
     """Streaming version of /query — returns SSE (text/event-stream)."""
     orchestrator = get_orchestrator(request)
-    session_id = request.headers.get("X-Session-ID", "default")
-    info(f"Received streaming query for session {session_id}")
+    info("Received streaming query")
 
     # Handle file datasets (same as /query)
     combined_text = ""
@@ -256,6 +259,12 @@ async def run_ai_query_stream(req: QueryRequest, request: Request):
             orchestrator.set_file_context(combined_text, metadata=metadata, file_type='structured', filename=last_filename)
         elif is_unstructured_file(last_filename):
             orchestrator.set_file_context(combined_text, file_type='unstructured', filename=last_filename)
+            try:
+                schedule_unstructured_index(
+                    background_tasks, combined_text, last_filename, orchestrator
+                )
+            except Exception as e:
+                print(f"Auto-RAG indexing failed: {e}")
         else:
             orchestrator.set_file_context(combined_text, filename=last_filename)
 
@@ -298,62 +307,44 @@ async def run_ai_query_stream(req: QueryRequest, request: Request):
 
 from app.db.vector_store import vector_store
 
-# Tracks cancellation flags for running indexing jobs: key = "session_id:table_name"
+# Tracks cancellation flags for running indexing jobs: key = table_name
 _cancel_flags: dict = {}
 
-def process_and_index_rag(text_data: str, source_name: str, session_id: str = "default"):
-    """Runs in the background: Chunks text into paragraphs with overlap, embeds, saves to pgvector."""
-    orchestrator = session_manager.get_orchestrator(session_id)
 
-    # Paragraph-level chunking: split on blank lines, then merge short paragraphs
-    raw_paragraphs = [p.strip() for p in text_data.split('\n\n') if p.strip()]
+def auto_index_unstructured_file(text: str, source_name: str, orchestrator) -> int:
+    """Chunk, embed (batched), and store an unstructured document in pgvector. Returns chunk count."""
+    chunks = [c for c in chunk_text_for_rag(text) if c.strip()]
+    if not chunks:
+        return 0
+    try:
+        embeddings = orchestrator.embedder.get_embeddings(chunks)
+        valid_chunks = [
+            c for c, emb in zip(chunks, embeddings) if emb and len(emb) == orchestrator.embedder.dimension
+        ]
+        valid_embeddings = [
+            emb for c, emb in zip(chunks, embeddings) if emb and len(emb) == orchestrator.embedder.dimension
+        ]
+        if valid_chunks:
+            vector_store.add_chunks(source_name, valid_chunks, valid_embeddings)
+            print(f"  └─ Indexed {source_name}: {len(valid_chunks)} chunks")
+        return len(valid_chunks)
+    except Exception as e:
+        print(f"Error batch-embedding {source_name}: {e}")
+        return 0
 
-    # Merge very short paragraphs with the next one (avoids single-sentence chunks)
-    merged = []
-    buffer = ""
-    for para in raw_paragraphs:
-        if len(buffer) + len(para) < 400:
-            buffer = (buffer + " " + para).strip()
-        else:
-            if buffer:
-                merged.append(buffer)
-            buffer = para
-    if buffer:
-        merged.append(buffer)
 
-    # Add overlap: each chunk includes the last sentence of the previous chunk
-    chunks_with_overlap = []
-    for i, chunk in enumerate(merged):
-        if i > 0:
-            # Take last sentence of previous chunk as overlap
-            prev = merged[i - 1]
-            sentences = prev.replace('!', '.').replace('?', '.').split('.')
-            overlap = sentences[-2].strip() + '.' if len(sentences) >= 2 else ''
-            if overlap:
-                chunk = overlap + ' ' + chunk
-        chunks_with_overlap.append(chunk[:600])  # cap each chunk at 600 chars
+def process_and_index_rag(text_data: str, source_name: str):
+    """Runs in the background: chunks text with overlap, embeds, saves to pgvector."""
+    orchestrator = get_orchestrator(None)
+    n = auto_index_unstructured_file(text_data, source_name, orchestrator)
+    print(f"✅ Finished indexing {source_name} into RAG ({n} chunks)")
 
-    valid_chunks = []
-    embeddings = []
-    for chunk in chunks_with_overlap:
-        if not chunk.strip():
-            continue
-        try:
-            vec = orchestrator.embedder.get_embedding(chunk)
-            valid_chunks.append(chunk)
-            embeddings.append(vec)
-        except Exception as e:
-            print(f"Error embedding chunk: {e}")
-
-    vector_store.add_chunks(source_name, valid_chunks, embeddings)
-    print(f"✅ Finished indexing {source_name} into RAG ({len(valid_chunks)} chunks)")
-
-def process_and_index_table(table_name: str, session_id: str = "default"):
+def process_and_index_table(table_name: str):
     """Retrieves all rows from a DB table, embeds them, and saves to pgvector."""
-    job_key = f"{session_id}:{table_name}"
+    job_key = table_name
     _cancel_flags[job_key] = False
 
-    orchestrator = session_manager.get_orchestrator(session_id)
+    orchestrator = get_orchestrator(None)
     print(f"Starting to index table '{table_name}'...")
     db = orchestrator.db
     if not db.engine:
@@ -405,8 +396,7 @@ async def trigger_rag_indexing(req: Request, background_tasks: BackgroundTasks):
         return {"status": "error", "message": "No active file context found to index."}
     
     # Send the heavy lifting to the background so the API returns instantly
-    session_id = req.headers.get("X-Session-ID", "default")
-    background_tasks.add_task(process_and_index_rag, text_content, source_name, session_id)
+    background_tasks.add_task(process_and_index_rag, text_content, source_name)
     
     return {"status": "indexing_started", "message": f"Indexing {source_name} in the background..."}
 
@@ -416,8 +406,7 @@ async def trigger_table_indexing(req: Request, background_tasks: BackgroundTasks
     table_name = data.get('table_name')
     if not table_name:
         return {"status": "error", "message": "No table name provided."}
-    session_id = req.headers.get("X-Session-ID", "default")
-    background_tasks.add_task(process_and_index_table, table_name, session_id)
+    background_tasks.add_task(process_and_index_table, table_name)
     return {"status": "indexing_started", "message": f"Indexing table '{table_name}' in the background..."}
 
 @app.post("/api/index_table/cancel")
@@ -425,20 +414,9 @@ async def cancel_table_indexing(req: Request):
     """Sets the cancel flag for a running table indexing job."""
     data = await req.json()
     table_name = data.get('table_name')
-    session_id = req.headers.get("X-Session-ID", "default")
-    job_key = f"{session_id}:{table_name}"
-
-    # Try exact session match first
-    if job_key in _cancel_flags:
-        _cancel_flags[job_key] = True
+    if table_name in _cancel_flags:
+        _cancel_flags[table_name] = True
         return {"status": "cancelled", "message": f"Cancel signal sent for '{table_name}'."}
-
-    # Fallback: find any job for this table regardless of session
-    for key in list(_cancel_flags.keys()):
-        if key.endswith(f":{table_name}"):
-            _cancel_flags[key] = True
-            return {"status": "cancelled", "message": f"Cancel signal sent for '{table_name}'."}
-
     return {"status": "not_found", "message": f"No active indexing job found for '{table_name}'."}
 
 @app.get("/api/vector_memory")
@@ -484,14 +462,17 @@ async def get_table_preview(table_name: str, req: Request):
         return {"columns": [], "rows": [], "error": str(e)}
 
 @app.post("/api/upload_file")
-async def upload_file(file: UploadFile = File(...), request: Request = None):
+async def upload_file(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+):
     """
     Uploads a file, extracts text, and sets it as context for the user's session Orchestrator.
     """
     orchestrator = get_orchestrator(request)
-    session_id = request.headers.get("X-Session-ID", "default")
     filename = file.filename
-    info(f"File upload request: {filename} (Session: {session_id})")
+    info(f"File upload request: {filename}")
     
     ALLOWED_EXTENSIONS = {
         ".txt", ".pdf", ".docx", ".csv", ".py", ".js", ".json", ".ipynb", 
@@ -518,13 +499,15 @@ async def upload_file(file: UploadFile = File(...), request: Request = None):
             }
         elif is_unstructured_file(filename):
             orchestrator.set_file_context(extracted_text, file_type='unstructured', filename=filename)
-            # Auto-index into pgvector RAG (shared across all sessions)
-            session_id = request.headers.get("X-Session-ID", "default") if request else "default"
-            process_and_index_rag(extracted_text, filename, session_id)
+            background_tasks.add_task(process_and_index_rag, extracted_text, filename)
+            msg = (
+                f"Document '{filename}' uploaded. Indexing runs in the background; "
+                "turn on Use RAG in chat to search it (no manual index step)."
+            )
             return {
                 "status": "success",
                 "filename": filename,
-                "message": f"Document uploaded and auto-indexed for semantic search. AI will use RAG to find relevant sections when you ask questions."
+                "message": msg,
             }
         else:
             orchestrator.set_file_context(extracted_text, filename=filename)
@@ -576,11 +559,8 @@ async def save_llm_settings(req: Request):
 
 @app.get("/api/sessions")
 async def get_active_sessions():
-    """Admin endpoint: shows how many sessions are active."""
-    return {
-        "active_sessions": session_manager.active_count,
-        "session_ids": [s[:8] + "..." for s in session_manager.session_ids()]
-    }
+    """Admin endpoint: single-user deployment info."""
+    return {"active_sessions": 1, "session_ids": ["default"]}
 @app.get("/api/connections")
 async def list_conns(): return config_manager.get_all_configs()
 
@@ -662,11 +642,11 @@ async def activate_conn(req: Request):
 
 @app.get("/api/history")
 async def get_hist(req: Request):
-    return history_manager.get_all_history(req.headers.get("X-Session-ID", "default"))
+    return history_manager.get_all_history()
 
 @app.delete("/api/history/{item_id}")
 async def delete_history(item_id: int, req: Request):
-    history_manager.delete_history_item(item_id, req.headers.get("X-Session-ID", "default"))
+    history_manager.delete_history_item(item_id)
     return {"status": "deleted"}
 
 # In main.py
